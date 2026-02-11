@@ -9,7 +9,7 @@ execute:
   warning: false
   message: false
   cache: false
-bibliography: ../../resources/bibliography.bib
+bibliography: ../resources/bibliography.bib
 ---
 
 # Preamble: Loading packages and configuration
@@ -46,7 +46,7 @@ We will be working with Quantese again, see `01_exercise.qmd` and the other data
 ```{r}
 #| label: load-quantese
 
-quantese <- read_csv("../data/quantese_naming_sim.csv") 
+quantese <- read_csv("../../data/quantese_naming_sim.csv") 
 
 # add log-transformed reaction time
 quantese <- quantese |> 
@@ -57,7 +57,7 @@ quantese
 
 ```
 
-### (A) check the design and formualte a linear mixed effects model
+### (A) check the design and formulate a linear mixed effects model
 
 Imagine, the researchers wanted to test the following hypotheses:
 
@@ -77,7 +77,7 @@ Run an appropriate linear mixed effects model to test this hypothesis. If you ru
 Take your selected model, interpret the model coefficients and calculate p-values for the relevant predictor.
 
 ```{r}
-#| label: lmer_quantese
+#| label: summary_quantese
 
 # YOUR CODE HERE
 # YOUR ANSWER HERE
@@ -97,17 +97,7 @@ Estimating variance components for linear mixed effects models is mathematically
 
 ```
 
-### (D) Optional: Consistency of effect 
-If you have not done `01_exercises`, plot how consistent the effect is across different participants. If you have done the prior exercise, remind yourself on it here and take it into consideration when reporting your (sub-optimal) model.
-
-```{r}
-#| label: consistency_quantese
-
-# YOUR CODE HERE
-
-```
-
-### (E) write up results
+### (D) write up results
 
 Write up your analysis and results accordingly.
 

@@ -94,7 +94,7 @@ In the following code chunk, adapt the above code to count how many items (`sent
 ```{r}
 #| label: check-design-items
 
-# YOUR CODE HERE
+polite |> count(sentence)
 
 ```
 
@@ -148,7 +148,16 @@ Some of these models may not converge! (And we will discuss that).
 ```{r}
 #| label: lmers
 
-# YOUR CODE HERE
+xmdl <- lmer(pitch ~ context + gender + 
+               (1 + context | subject) +
+               (1 + context | sentence), 
+             data = polite)
+
+# reducing random effect structure
+xmdl_simpler1 <- lmer(pitch ~ context + gender + 
+               (1 + context | subject) +
+               (1 + context | sentence), 
+             data = polite)
 
 ```
 

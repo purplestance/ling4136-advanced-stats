@@ -1,0 +1,25 @@
+Code book of of Japanese_Pokemon.csv
+
+Original article: “Kilpratrick_et_al_2023.pdf”
+
+Variables:
+
+Designation: source of Pokemon name. Official = the official names of Japanese Pokemon; Elicited = elicited names from naive participants.
+
+pokemonname: Pokemon name in Japanese
+
+Output: Pokemon name in transcribed form
+
+Length: Amount of phones in name
+
+Sum of values: Amount of phones in name (as calculated by counting individual segments)
+
+Checksum: assessment of whether Length and Sum of values match
+
+Evolution: Evolution stage of Pokemons: 1 = pre-evolution; 2 = post-evolution, NA = do not evolve
+
+f = amount of /f/ sounds in name
+
+T = amount of /T/ sounds in name
+
+etc. Check paper for details on transcriptions.
