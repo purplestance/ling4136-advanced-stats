@@ -1,0 +1,191 @@
+---
+title: "session04 - homework - solutions"
+format: html
+editor: visual
+date: 2025-07-17
+author: Timo Roettger, Alexandra Bogoyavlenskaya
+execute:
+  error: false
+  warning: false
+  message: false
+  cache: false
+bibliography: ../../resources/bibliography.bib
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_and_libraries
+#| echo: false
+
+# just run this code chunk
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, lme4, ggeffects, patchwork)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+```
+
+# Introduction to data
+
+We will be working with perception data from one of my own experiments [@roettger2014assessing].
+
+In this study, we investigated incomplete neutralization (IN). IN refers to phenomena in which a phonological neutralization is phonetically incomplete. In this paper, researchers looked at final devoicing in German. In German, the word "RC\$der" (*engl.* 'wheels') has a voiced /d/, but when forming the singular "Rad" (*engl.* 'wheel'), the /d/ is in word-final position and is devoiced, i.e. loses its phonological voicing and thus is supposed to be identical to the /t/ sound in "Rat" (*engl.* 'council'). However, when measuring the /d/ in "Rad" and the /t/ in "Rat", they are phonetically not identical. There are small but consistent differences between them. In experiment 4 of the paper, the researchers test whether these small acoustic differences can be perceived by naive listeners.
+
+They showed 16 listeners 24 different pseudoword pairs produced by 16 different speakers and measured both reaction time as well as accuracy of correctly identifying the speaker-intended voicing category.
+
+Let's load in the data and have a look:
+
+```{r}
+#| label: load-in
+
+# I had to add one more "../" to the path so it will run.
+
+incomplete <- read_csv("../../data/incomplete_perception.csv") |> 
+  # preprocessing the data such that everything that ought to be a factor is one
+  mutate(listener = as.factor(listener),
+         voice = as.factor(voice), 
+         item_pair = as.factor(item_pair),
+         correct_voicing = as.factor(correct_voicing),
+         chosen_voicing = as.factor(chosen_voicing)
+         )
+
+# have a look
+incomplete
+
+```
+
+These are the variables that you will find within the data:
+
+-   `order`: trial order for each listener (1-392)
+-   `listener`: unique identifier for each listener (n = 16)
+-   `age`: listeners' age
+-   `item_pair`: unique identifier for each word pair (e.g. pruk vs. prug, n = 24)
+-   `voice`: unique identifier for each speaker voice (n = 16)
+-   `RT` = reaction time in ms.
+-   `ACC` = accuracy (binary, 1 = correct, 0 = incorrect)
+-   `correct_voicing` = whether the audio stimuli contained an underlyingly voiced or voiceless stop in word-final position
+-   `chosen_voicing` = the voicing category that the listeners selected in a 2-alternative forced-choice.
+
+### (A) Run a mixed effects model
+
+In their paper, they described different ways how to analyse the perception data. Among other things, they use a generalized linear mixed effects model. While not clearly articulated in the paper, they were mainly interested in whether listeners chose the intended voicing category more often than the unintended one. One way to test this hypothesis is to predict the `chosen_voicing` category by the `correct_voicing` category (i.e. the one that was intended by the speaker).
+
+Build that model with the appropriate random effect structure, taking into account all important grouping variables.
+
+(NOTE: if you encounter the following error message, ignore for now and rerun the model until it does not give this error: *Error in pwrssUpdate(pp, resp, tol = tolPwrss, GQmat = GQmat, compDev = compDev, : Downdated VtV is not positive definite*)
+
+```{r}
+#| label: glmer_incomplete
+
+library(lme4)
+
+glmer_incomplete <- glmer(
+  chosen_voicing ~ correct_voicing +
+    (1 + correct_voicing | listener) +
+    (1 + correct_voicing | item_pair) +
+    (1 | voice),
+  data = incomplete,
+  family = binomial)
+
+summary(glmer_incomplete)
+
+
+```
+
+### (B) Interpret the model output
+
+Interpret the model coefficients and calculate p-values for the relevant predictor to test the hypothesis by comparing the full model (with the predictor) with the corresponding null model (without the predictor, i.e. just substitute the fixed effect predictor with 1).
+
+```{r}
+#| label: interpretation
+
+#calculating p-value
+plogis(-0.03231)
+
+#so the p-value of responding with the reference category of chosen_voicing ("voiced") when correct_voicing is at its reference level ("voiced") is 0,49, meaining it is not significant and is about chance.
+
+#comparing full and null models
+glmer_null <- glmer(chosen_voicing ~ 1 +
+                  (1 + correct_voicing | listener) +
+                  (1 + correct_voicing | item_pair) +
+                  (1 | voice),
+                data=incomplete, family=binomial)
+
+anova(glmer_null, glmer_incomplete, test="Chisq")
+
+#Comparing the full model to the null model gives a likelihood ratio test of Chisq = 13.236 with p = 0.0002746, so adding correct_voicing significantly improves the fit.
+
+```
+
+### (C) Plot predictions
+
+Plot the model predictions alongside a measure of uncertainty (standard error or 95% CI).
+
+Estimating variance components for linear mixed effects models is mathematically not as straightforward as it is for simple linear models. We shortcut manual extraction for now and use the beautiful `ggeffects` package. Check their `predict_response()` function and use it to derive predictions and plot them.
+
+```{r}
+#| label: plot_prediction_in
+
+prediction <- predict_response(glmer_incomplete, terms = "correct_voicing")
+
+#I got a warning message, so I will correct it using the message info.
+
+prediction <- predict_response(
+  glmer_incomplete,
+  terms = "correct_voicing",
+  type = "fixed", #If I understand correctly, we don't need random effects here?
+  bias_correction = TRUE)
+
+ggplot(prediction, aes(x = x, y = predicted)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.15) +
+  labs(
+    x = "correct_voicing",
+    y = "Predicted probability"
+  ) +
+  coord_cartesian(ylim = c(0, 1)) +
+  theme_minimal()
+
+#We see that the predicted probability for both coditions is around 0.5, so about chance.
+```
+
+### (D) OPTIONAL Plot variation across grouping variables
+
+Compare the descriptive averages for the critical relationship for your grouping variables and describe what's going on.
+
+```{r}
+#| label: plot_descriptive_in
+
+# YOUR CODE HERE
+
+```
+
+We can see massive variation, particularly for different item pairs and different speaker voices.
+
+### (E) Use Github to upload your analysis
+
+-   fork https://github.com/timo-b-roettger/ling4136-advanced-stats
+-   clone your forked repo onto your computer
+-   store your solutions in this script as `YOURLASTNAME_04_homework.qmd`
+-   move your script into `/homework/04_homework/`
+-   commit and push changes to your forked repo
+-   add me as a collaborator to your repository and send the link to your homework through Canvas
+
+# References
+
+<!-- References will auto-populate in the refs div below -->
+
+::: {#refs}
+:::
