@@ -1,0 +1,528 @@
+---
+title: "session06 - excercises"
+format: html
+editor: visual
+date: 2025-07-17
+author: Timo Roettger
+execute:
+  error: false
+  warning: true
+  message: false
+  cache: false
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_and_libraries
+#| echo: false
+
+# just run this code chunk
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, brms, bayesrules, tidybayes)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+# options to increase efficiency of brms models (optional)
+#options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# Introduction
+
+The main learning goals of this week's practical parts are:
+
+-   learning how to run bayesian models
+-   becoming familiar with thinking about priors
+-   learning how to specify priors
+-   learning how to run prior predictive checks
+-   learning how to run posterior predictive checks
+
+In this exercise, we will model the mean of a distribution of F0 values (the acoustic analog of "voice pitch"). We will play with different priors to see how that influences the posterior. This is a walkthrough, so relax and see if you can follow.
+
+```{r}
+#| label: load-pitch
+
+pitch <- read_csv('../data/winter_2021_pitch_averaged_subset.csv')
+
+# have a look
+pitch
+
+```
+
+# Descriptive statistics and data visualization
+
+Let's visualize the raw response distribution by making a density plot of it:
+
+```{r}
+#| label: show_overall_distribution
+
+pitch |> 
+  ggplot(aes(x = F0)) +
+  geom_density(fill = 'steelblue') +
+  theme_minimal()
+
+```
+
+OK, most pitch values go from about 100 Hz to 130 Hz or so. A few very high F0 values. If you know anything about phonetics, this looks like it could be the F0 values from a sample of male speakers... and indeed, these are 32 "voice pitch" measurements from men.
+
+Let's compute the mean and standard deviation for this sample, and let's also check the range:
+
+```{r}
+#| label: descriptive_statistics
+
+pitch |> 
+  summarize(M = mean(F0),
+            SD = sd(F0),
+            min = min(F0),
+            max = max(F0))
+
+```
+
+We can model the mean of these values with a simple linear model that assumes a slope of 0 (a flat line representing the mean). We can specify the linear model formula and store it as a variable like so:
+
+```{r}
+#| label: simple_lm_formula
+
+simple_formula = bf(F0 ~ 1)
+
+```
+
+Now before we worry about priors whatsoever, let me show you how easy it is to run this Bayesian model:
+
+```{r}
+#| label: so_easy
+#| cache: TRUE
+
+# use the brm() function and specify formula and dataset. Easy.
+xmdl <- brm(simple_formula,
+            data = pitch)
+
+```
+
+And to anticipate what interpretation looks like, the output of such a model looks shockingly familiar.
+
+```{r}
+#| label: output_brm
+
+xmdl
+
+```
+
+Okay now that you have seen how harmless this all is, let's become proper Bayesians and do some *thinking.* Let's think about priors. In order to know how many parameters this model has and therefore what priors we need to set, we can use the `get_prior()` function:
+
+```{r}
+#| label: get_prior
+
+# the get_prior() function requires the formula, the dataset, and the error family
+get_prior(simple_formula, pitch, family = "gaussian")
+
+```
+
+This model has technically two parameters. Attention, the term parameter will be used in two different ways: Models have parameters, these are numerical values we estimate with our data. Here, the `Intercept` parameter basically gives us the overall mean of pitch in the dataset. And `sigma` gives us the residual error, i.e. the leftover variation. However, we also speak about distributional parameters that describe a certain distribution. For example, a normal distribution has two distributional parameters.
+
+-   mu, i.e. the mean of the Gaussian distribution, defining its location
+-   sigma, i.e. the standard deviation of the Gaussian distribution, defining its width
+
+This can be confusing at the beginning, but we will get used to it.
+
+Going back to our priors and the outcome of the above code, `brm` uses so-called *default* priors for these two parameters. These are usually not completely unreasonable prior assumption derived from the data. Here both the Intercept and sigma are associated with a `student_t` distributions. Don't worry about it, we will be talking about that later. Since we want to be good Bayesians, we will define our own priors now.
+
+# Uniform prior model
+
+We'll assume that the data has been generated by a normally distributed process, which is more or less standard for most continuous variables that are not bound. We have seen before and will encounter again that this assumption is sometimes problematic. But for now, don't worry about it.
+
+For both the Intercept and sigma, we'll have to define distributional parameters.
+
+We'll start with a super agnostic prior for the mean: `uniform(0,1000)` assuming that any value between `0` and `1000` are equally probable and values outside of this range are impossible.
+
+Uniform priors are both super informative and also super non-informative. They have *hard* boundaries: if the mean was below 0 or above 1000 Hz, this prior would not be able to detect it at all. From this perspective, the uniform prior is very strong and encodes a lot of information.
+
+On the other hand, within the bounds of the uniform distribution, in this case \[0, 1000\], anything goes, with equal probability. This prior gives equal weight to any mean within \[0, 1000\] before having seen the data. It thinks that a mean of 3 Hz is just as probable as one of 126 Hz, and 672.842 Hz is just as probable of a mean as 672.843 Hz etc.
+
+When thinking about uniform priors, it's important to think about the range of the data. We've seen in the density curve above that the F0 values of this sample lie between 80-180 Hz, which means that the mean must be within that range. Since `uniform(0, 1000)` covers the entire range of the data, we're sure that nothing is out of bounds, and we're also sure that the prior is essentially uninformative for this data.
+
+In effect, this means that all results will be driven by what the data suggests, and only by what the data suggests: the likelihood completely dominates the posterior in this case.
+
+(In this exercise, we'll keep the sigma (i.e. residual variance) parameter constant. I will set the prior for sigma to `normal(0, 10)`. I'll unpack my choice for this prior later. For now, we'll focus on the prior of the Intercept only)
+
+```{r}
+#| label: set_uniform_prior
+
+# Define priors as a list of two priors
+uniform_prior <- c(prior(uniform(0, 1000), class = 'Intercept'),
+                   # normal prior for sigma for now
+                   prior(normal(0, 10), class = 'sigma'))
+
+# Check:
+uniform_prior
+
+```
+
+Next, we can fit a Bayesian model — we'll skip over a lot here in terms of how this model is estimated (using MCMC) but in order to model a simple mean, all we need to do in `brms` is to specify an intercept only model just as we did above and use the function `brm()`.
+
+```{r}
+#| label: fit_uniform_prior_mdl
+#| warning: TRUE
+
+uniform_prior_mdl <- brm(# specify linear model formula
+                         F0 ~ 1,
+                         # specify error distribution, here Gaussian
+                         family = gaussian(),
+                         # feed in the priors we defined above
+                         prior = uniform_prior,
+                         # specify data
+                         data = pitch,
+                         # either store model here OR load model if stored already
+                         #file = "../models/05_uniform_prior_mdl",
+                         # for consistent results, we set a seed
+                         seed = 42) 
+
+```
+
+First, notice the warning messages! `brms` doesn't like you putting uniform priors because they have hard bounds. The warning message is for you to think about that you're certain that the mean is included within the bounds you set.
+
+Let's see what mean the model estimated:
+
+```{r}
+#| label: summary_uniform_prior_mdl
+
+# focus for now on the Regression Coefficients with the "Estimate" for our "Intercept"
+uniform_prior_mdl
+
+```
+
+The output is structured into two tables: one table for everything that relates to the estimated coefficient, our grand average (under `Regression coefficients`), and another table that relates to the residual variance (under `Further distributional parameters`).
+
+If you look at the Intercept row, you get an `Estimate` value. This is the models posterior estimate for the mean of the `Intercept` parameter, in our case the mean of the pitch values. Notice that the estimated mean is basically identical to the sample mean in our data. That should be the case given that we used a uniform prior, i.e. the likelihood domaintes the posterior.
+
+# A wide Normal prior model
+
+OK. Since the point of this exercise is to explore how posterior estimates shift as a result of different prior choices, we'll want to explore some "crazy" priors that are very far away from the mean. We wouldn't usually do that in an actual data analysis.
+
+So, for our "crazy" prior, let's assume that the analyst didn't get the memo that this voice pitch data comes from male speakers.
+
+The following normally distributed prior, visualized here using the handy `plot_normal()` function from `bayesrules`, assumes that the most probable mean would be at 200Hz.
+
+```{r}
+#| label: visualize_normal_200_20
+
+plot_normal(mean = 200, sd = 20) +
+  xlim(120,280)
+
+```
+
+Applying the 68%-95% rule, this prior embodies the assumption that we are 68% certain the mean is within \[180 Hz, 220 Hz\] (+/- 1 SD), and 95% certain the mean is within \[160 Hz, 240 Hz\] (+/- 2 SD). That's very vague actually: if you think about it, it would be indeed very unusual to find the *mean* of a sample of women to be as low as 160 Hz.
+
+Anyway, for now we'll just run with this prior to see how it affects the posterior.
+
+Define our prior object as we did before (sticking to the same sigma prior):
+
+```{r}
+#| label: set_wide_normal_prior
+
+wide_normal <- c(prior(normal(200, 20), class = 'Intercept'),
+                 prior(normal(0, 10), class = 'sigma'))
+
+```
+
+```{r}
+#| label: fit_wide_prior_mdl
+
+wide_prior_mdl <- brm(F0 ~ 1,
+                      family = gaussian(),
+                      prior = wide_normal,
+                      data = pitch,
+                      # I have stored the model object for you so you do not have to sample when you go through this script
+                      file = "../models/05_wide_prior_mdl",  
+                      seed = 42) 
+
+```
+
+Check the estimated mean:
+
+```{r}
+#| label: summary_wide_prior_mdl
+
+wide_prior_mdl
+
+```
+
+Wow, this is actually still surprisingly close to the sample mean... *despite us assuming a prior for women!!!*
+
+... and all of this with just 32 data points. The likelihood was enough to beat the relatively crazy prior... but that was only because it was specified to be relatively vague with SD = 20 Hz. When the prior is normally distributed, its specificity/vagueness is reflected by narrow/wide standard deviations. The wider the standard deviation, the more open your prior is to the mean being further away from the center of the normal.
+
+# A narrow Normal prior model
+
+Again, just for demonstrations sake, let's see what happens if we specify the standard deviation to be really really narrow. Let's set the standard deviation to SD = 1.
+
+```{r}
+#| label: set_narrow_normal_prior
+
+narrow_normal <- c(prior(normal(200, 1), class = 'Intercept'),
+                   prior(normal(0, 10), class = 'sigma'))
+
+```
+
+Let's visualize this prior before fitting the model on the same x-axis than earlier.
+
+```{r}
+#| label: visualize_normal_200_1
+
+plot_normal(mean = 200, sd = 1) +
+  xlim(120,280)
+
+```
+
+This prior is crazy narrow compared to the one before. Applying the 68%-95% rule, this prior is akin to saying: "I'm 68% certain the mean is within \[199 Hz, 201 Hz\], and I'm 95% certain the mean is within \[198 Hz, 202 Hz\]."
+
+Let's see what happens when we supply this prior to the model:
+
+```{r}
+#| label: fit_narrow_prior_mdl
+
+narrow_prior_mdl <- brm(F0 ~ 1,
+                      family = gaussian(),
+                      prior = narrow_normal,
+                      data = pitch,
+                      # I have stored the model object for you so you do not have to sample when you go through this script
+                      file = "../models/05_narrow_prior_mdl",  
+                      seed = 42) 
+
+```
+
+How has this affected our estimates?
+
+```{r}
+#| label: summary_narrow_prior_mdl
+
+summary(narrow_prior_mdl)
+
+```
+
+This time around, our model is *really* off.
+
+This happens because of our prior specification: before seeing the data, a `Normal(200, 1)` prior embodies a very strong assumption, namely, that we're really certain the mean is close to 200 Hz.
+
+As a result of the prior being so strong and us having just 32 data points, the model almost doesn't listen to the data. The prior dominates the posterior, and our weak likelihood (based on data from just 32 speakers) does not have a strong say anymore.
+
+This exercise is important for getting the basic intuition of how the likelihood and the prior interact, and how this interaction results in different posteriors.
+
+If the priors are uninformative or weak, as was the case with our `Uniform(0, 1000)` and `Normal(200, 20)` priors, the likelihood (i.e., the data) dominates. If the prior is really narrowly focused on a small range, as with `Normal(200, 1)`, then the prior dominates for a small dataset like this.
+
+# Visualize the posterior
+
+We'll stick with the model that had the uniform prior for now. Above, we just checked the summary statistics of the posterior distribution. As a reminder:
+
+```{r}
+#| label: summary2_uniform_prior_mdl
+
+uniform_prior_mdl
+
+```
+
+It's good practice to not just rely on these summaries, but to actually visualize the posterior distribution.
+
+For this, we need to extract the "posterior samples" from the fitted `uniform_prior_mdl` object. Why these are "samples" will be explained later in class.
+
+The `get_variables()` function is helpful for knowing how variables are called within the `brms` model object:
+
+```{r}
+#| label: get_variables
+
+get_variables(uniform_prior_mdl)
+
+```
+
+Apparently the intercept is either called `b_Intercept` or `Intercept`. We can use this variable name together with the `spread_draws()` function from the `tidybayes` package to extract the posterior values for the intercept (the mean):
+
+```{r}
+#| label: extract_posteriors
+
+uniform_prior_mdl |> 
+  spread_draws(Intercept)
+
+```
+
+This is a table containing the samples that approximate the posterior distribution (again we talk about this concept later). We can simply make a density plot of the Intercept posterior samples using `geom_density()`, or we use `stat_halfeye()` from the `tidybayes` package for a density curve with a "half-eye" plot:
+
+```{r}
+#| label: visualize_posterior
+
+wide_prior_mdl |> 
+  spread_draws(b_Intercept) |> 
+  ggplot(aes(x = b_Intercept)) +
+  stat_halfeye(fill = 'darkorchid3')
+  # geom_density() 
+
+```
+
+The black dot at the bottom is the median of the posterior distribution. The thick line represents the 50% credible interval, and the thin lines the 95% credible interval. These intervals represent the so-called 95% of the high density interval. When looking at normal distributions, these are basically the middle x% of samples.
+
+For pedagogical reasons, I want you to be able to calculate these values that you see in the summary by hand:
+
+```{r}
+#| label: compute_posterior_summaries
+
+uniform_prior_mdl |> 
+  spread_draws(b_Intercept) |> 
+  summarize(posterior_median = median(b_Intercept),
+            SE = sd(b_Intercept),
+            lower_CI = quantile(b_Intercept, 0.025),
+            upper_CI = quantile(b_Intercept, 0.975))
+
+```
+
+Notice that these values are the same as we got from `uniform_prior_mdl` above, just rounded differently because the `tidyverse` and `brms` have different display defaults (don't worry about it).
+
+# Standard deviation and joint posterior
+
+Let's look at the full model output again:
+
+```{r}
+#| label: summary3_uniform_prior_mdl
+
+uniform_prior_mdl
+
+```
+
+Let us look at `Further Distributional Parameters` now.
+
+As per this output, the posterior mean of sigma, the residual variance is around 22 Hz.
+
+We can apply the 68%-95% to get some intuition about what this standard deviation means in terms of the variation we expect to see in the data:
+
+-   "lots" (68%) of the data is estimated to fall in between \[124 Hz - 22 Hz, 124 Hz + 22 Hz\], so \[102 Hz, 146 Hz\]
+-   "most" (95%) of the data is estimated to fall in between \[80 Hz, 168 Hz\] (the mean 124 Hz +/- 2 \* 22 Hz, so, +/- 44 Hz)
+
+It's important to realize that there's also uncertainty about the standard deviation. In the output, we see this in the 95% credible interval for the `sigma` term, which is indicated to be \[\~18 Hz, \~27 Hz\].
+
+In other words: the standard deviation could actually be as low as 18 Hz, or as high as 27 Hz. In other words, a whole range of different standard deviations are compatible with this data, but standard deviations closer to 22 Hz are more plausible.
+
+Since both the mean and the standard deviation are estimated *simultaneously*, we can visualize them both together. For this, we can expand the `spread_draws()` function call to not only include the `Intercept` variable stored in the model object, but also the `sigma` variable.
+
+```{r}
+#| label: visualize_joint_posterior
+
+uniform_prior_mdl |> 
+  spread_draws(b_Intercept, sigma) |> 
+  ggplot(aes(x = b_Intercept, y = sigma)) +
+  geom_bin2d() +
+  theme_minimal()
+
+```
+
+This shows us that most of the estimated means (x-axis) are in the range of \~124Hz (as we already explored above), and most of the standard deviations in the range of about 20-25Hz.
+
+What this image shows is the *joint posterior* of this model. Since we estimate two distributional parameters (mu, sigma), we get a two-dimensional representation of what estimates are plausible.
+
+Since there's only two parameters, this posterior captures the essence of what our model "thinks" after having seen the data.
+
+# Prior for the standard deviation
+
+Now, remember above, I told you to ignore the fact that I set a `normal(0, 10)` prior on the standard deviation:
+
+-   `prior(normal(0, 10), class = sigma)`
+
+Why did I chose 10 Hz, and how did I get there? I used my experience seeing lots of F0 data from various speakers in my own research to guide my thinking here.
+
+What this experience tells me is that people's average F0 values differ by quite a lot. Last time I measured my own voice, it was around 103 Hz. I definitely know male speakers with lower voices (around 80 Hz), as well as male speakers with more high-pitched voices (120 Hz or above).
+
+So, even before seeing this data, my rough guess for what a standard deviation for F0 data could be would've been around 20 Hz. If I now set the prior for the standard deviation to `normal(0, 10)`, this would mean that I expect "lots" of the standard deviations to be within 10 Hz, and "most" to be within 20 Hz. Be careful here: we're *not* applying the 68%-95% rule to the data here, but to what ranges of standard deviations we expect.
+
+It is much easier to reason about priors if we visualize them.
+
+```{r}
+#| label: visualize_half_normal_prior
+
+tibble(x = c(0, 40)) |> 
+  ggplot(aes(x)) +
+  stat_function(fun = function(x) dnorm(x, 0, 10)) +
+  labs(title = 'Half-Normal(0, 10)', x = 'σ', y = 'Density')
+
+```
+
+Notice that this is a half-normal because standard deviations can only be positive. Whenever you use a normal or t-distributed prior for sigma terms in `brms`, these will automatically be half-distributions.
+
+As you can see more easily in this picture, this prior is very skeptical about standard deviations above 30 Hz, and it's quite heavily biased against standard deviations above 40 Hz.
+
+A 20 Hz standard deviation still has a fair bit of probability mass associated with it, so it is clearly not ruled out.
+
+The `normal(0, 10)` prior on the standard deviation then biases the model against very large standard deviations - unless the data is very strong to convince the model otherwise. Conversely, this means that this prior will bias towards slightly smaller standard deviations.
+
+After seeing this picture, I realized that maybe I could have even chosen a slightly wider prior here, maybe `normal(0, 15)`. The 95% interval for that would reach to 30 Hz, so a 20 Hz standard deviation that was my initial guess based on experience, would more firmly fall within that, as shown here:
+
+```{r}
+#| label: visualize_half_normal_prior2
+
+tibble(x = c(0, 40)) |> 
+  ggplot(aes(x)) +
+  stat_function(fun = function(x) dnorm(x, 0, 15)) + # changed from 10 to 15
+  labs(title = 'Half-Normal(0, 10)', x = 'σ', y = 'Density')
+
+```
+
+Feel free to explore how much the estimates change if you choose a more forgiving `normal(0, 15)` prior - you'll find that they don't change by too much in this case.
+
+# Exploring brms defaults
+
+Let's see what priors `brms` would choose for us by default.
+
+```{r}
+#| label: fit_brms_default_mdl
+
+brms_default_mdl <- brm(F0 ~ 1,
+                        family = gaussian(),
+                        data = pitch,
+                        file = "../models/05_default_prior_mdl",  
+                        seed = 42)
+
+```
+
+If we don't supply a prior object, `brms()` will choose priors for you! But what are they? You can interrogate the priors using `prior_summary()`:
+
+```{r}
+#| label: check_brms_default_mdl_priors
+
+prior_summary(brms_default_mdl)
+
+```
+
+`brms` chose a `student_t(3, 0, 23.8)` prior for the `sigma` term, and a `student_t(3, 121.3, 23.8)` prior for the Intercept.
+
+These priors are Student t-distributions. The first term (= `3`) is the degrees of freedom, which determines the thickness of the tails. The second term represents the mean, which is chosen to be `0` for the sigma term, and `121.3` for the mu term. The third and final parameter (= `23.8`) is called "scale" and you can think of it as being analogous to the standard deviation in that it determines the spread of the distribution.
+
+The plot below visualizes this prior (solid red line), and it also shows the `normal(0, 10)` prior I used above.
+
+The plot also visualizes another t-distribution (dashed red line) that has the same mean and scale parameter, but changes the degrees of freedom to a higher value (= `30`). As you can see, lower values mean thicker tails, i.e., values in the tail of the distribution are assumed to be slightly more plausible.
+
+```{r}
+#| label: visualize_t_distribution_prior
+
+tibble(x = c(-150, 150)) |> 
+  ggplot(aes(x)) +
+  stat_function(fun = function(x) dt((x - 0) / 23.8, df = 3) / 23.8, col = 'red') +
+  stat_function(fun = function(x) dt((x - 0) / 23.8, df = 30) / 23.8, col = 'red', linetype = 'dashed') +
+  stat_function(fun = function(x) dnorm(x, mean = 0, sd = 10), col = 'steelblue') +
+  scale_x_continuous(breaks = seq(-150, 150, 50)) +
+  labs(title = 'Student-t(3, 0, 23.8)', x = 'σ', y = 'Density')
+
+```
+
+You can see that the normal we chose has a much narrower spread. `brms` default priors tend to err on the side of vagueness because they don't want to bias results too much, which means that they permit a much larger range of plausible values.
+
+These default priors are derived from the data. That's another thing that moving forward, we'll try to avoid as much as possible. You usually know much more about your data than you think. The more you know, the more precisely you can specify your priors. The less you know, the wider you want to keep your priors.
+
+We'll revisit the topic of priors again in later sections of this course. This might all feel very "subjective" and it actually is. Bayesian reasoning embraces the very fact that all decisions we as humans make a subjective to a large extent. But these beliefs can be more or less justified.

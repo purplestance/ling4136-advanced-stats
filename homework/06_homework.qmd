@@ -1,0 +1,213 @@
+---
+title: "session06 - homework"
+format: html
+editor: visual
+date: 2025-12-17
+author: Timo Roettger
+execute:
+  error: false
+  warning: false
+  message: false
+  cache: true
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_libraries
+#| echo: false
+
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, tidybayes, brms, bayesrules)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+# options to increase efficiency of brms models (optional)
+options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# Introduction
+
+We will be analyzing the data from the following article:
+
+Winter, B., & Matlock, T. (2013). Making judgments based on similarity and proximity. Metaphor and Symbol, 28(4), 219-232.
+
+```{r}
+#| label: preprocessing
+
+# Load our datasets
+sim <- read_csv("../data/linguistic_similarity.csv")
+
+```
+
+In this study, they investigated the conceptual structure of the metaphor “SIMILARITY IS PROXIMITY.” They did a series of experiments in which they investigated whether participants judge entities to be closer to each other when they are thought to be more similar. They presented participants with descriptions of two cities. These cities either sounded similarly or they sounded differently (`Phon`). Moreover, the descriptions depicted the cities as either semantically similar or different (`Sem`). After reading both descriptions and seeing both names, participant had to draw into a map and had to randomly guess where these two cities are located. The authors measured the `Distance` between the two cities for each participant in millimeters.
+
+# (A) Descriptive statistics and data visualization
+
+Let's visualize the raw `Distance` distribution for both `Sem` categories making a density plot of it and describe the distributions.
+
+```{r}
+#| label: show_overall_distribution
+
+# YOUR CODE HERE
+
+```
+
+# (B) Think about priors
+
+The researchers are interested in whether semantic similarity between the cities affects how close/far apart participants draw the cities, which we can model with the following formula:
+
+```{r}
+#| label: model_formula
+
+mdl_formula = bf(Distance ~ Sem)
+
+```
+
+Use the `get_prior()` function and add `mdl_formula` as its first argument and the `sim` dataset as its second. This will give you a list of parameters that the model will estimate and will need a prior for.
+
+```{r}
+#| label: get_prior
+
+get_prior(mdl_formula, sim) 
+
+```
+
+Generally, every coefficient of our model corresponds to one parameter under the class `b`, except for the `Intercept` which is its own class. So we have a prior for the `Intercept` of the linear model and a prior for the coefficient `SemSimilar`. Priors of class `b` for our predictors always receive a flat uniform prior by default if you do not specify it otherwise. The default prior for the `Intercept` is data driven and uses a student-t distributions that covers most of the data. We also have a prior for `sigma` which is the residual variance and again is by default assigned a student-t prior informed by the variance in the data.
+
+Now I want you to specify normally distributed priors which respect the following knowledge we have: Participants needed to draw the cities on a map on a piece of din-A4 paper. The furthest two points on the map where 214 mm apart.
+
+Your task: First use the `plot_normal()` function to find a normal distribution that covers reasonable Distance values under the above described assumptions of the experiment.
+
+Ignore for now that you might generate values that are impossible at the tails of the distribution.
+
+```{r}
+#| label: prior_exploration
+
+plot_normal(#YOUR PARAMETER CHOICES HERE
+  )
+
+```
+
+# (C) Specify priors
+
+Now based on your exploration, specify priors. Remember what the two coefficients `Intercept` and `SemSimilar` mean: `Intercept` reflects the average Distance measure for `Sem = Different`, and `SemSimilar` reflects the estimated difference between the Intercept and `Sem = Similar`. Define a prior that assumes normally distributed Distance measures somewhere in the middle of the map for both conditions:
+
+```{r}
+#| label: spec_priors
+
+my_priors <- #YOUR PRIORS HERE
+
+```
+
+# (D) Run a prior predictive check
+
+Add your priors to the model below. We will run the model and sample only from our priors, i.e. we ignore the data. This is a good sanity check to see if our priors make sense and what they would predict. Plug in `my_priors` from (C) and run the code chunk.
+
+```{r}
+#| label: model_priors
+
+xmdl_prior <- brm(Distance ~ Sem,
+            family = gaussian(),
+            #prior = #YOUR PRIORS HERE
+            sample_prior = "only",
+            data = sim,
+            seed = 42)
+
+
+# We do a little wrangling to get it into a nice shape
+xmdl_prior |> 
+  # first extract the samples
+  spread_draws(b_Intercept, b_SemSimilar) |> 
+  # Create two columns that represent the two SEM categories
+  mutate(Different = b_Intercept,
+         Similar = b_Intercept + b_SemSimilar) |> 
+  # and then bring into a long format like the data
+  select(Different, Similar) |> 
+  pivot_longer(everything(), names_to = "Sem", values_to = "Distance") |> 
+  # now we plot
+  ggplot(aes(x = Distance, fill = Sem)) +
+    geom_density() +
+    facet_wrap(Sem ~ .)
+
+```
+
+Do the priors reflect what you had in mind? If not, go back to (C) and play around with the priors until you are satisfied.
+
+# (E) Run the full model
+
+If you are happy with your priors, run the full model and plot the posteriors just like in the code chunk above. How did the posteriors change after seeing the data?
+
+```{r}
+#| label: model_posteriors
+
+# YOUR CODE HERE
+
+```
+
+After seeing the data the very diffuse priors have given way to much more narrow and shifted posteriors.
+
+We can also plot the data in an alternative way, since we are mostly interested in the difference between the two conditions:
+
+```{r}
+#| label: alternative_plot
+
+# We do a little wrangling to get it into a nice shape
+xmdl |> 
+  # first extract the samples for the differences only
+  spread_draws(b_SemSimilar) |> 
+  # plot
+  ggplot(aes(x = b_SemSimilar)) +
+    geom_density(fill = "purple") 
+
+```
+
+Now, one last step, before we move on. Let's check whether this model could have generated the data using `pp_check()`.
+
+Throughout our modeling process, we'll constantly use `pp_check()`, which is a way for us to know whether our model could've generated the data. This is a way of investigating whether the model 'fits' well. PP checks can tell us, for example, whether the chosen response distribution (in this case Gaussian) was appropriate, or whether the model will have to be expanded, that is, whether particular predictors are missing.
+
+Describe whether the data (dark line) and the posterior samples (light blue line) match up and if now, what the nature of the mismatch is.
+
+```{r}
+#| label: pp_check
+
+pp_check(xmdl, ndraws = 100)
+
+# YOUR ASSESSMENT HERE
+
+```
+
+# OPTIONAL (F) fix the assumption violation
+
+Can you fix the mismatch between the observed data (dark blue line) and the simulated data (light blue lines) with, for example, a transformation of the Distance measure? Run the model again with the transformed values and do the pp check again.
+
+```{r}
+#| label: transform
+
+# YOUR CODE HERE
+
+```
+
+# OPTIONAL (G) specify priors that will reduce the effect of SEM to zero
+
+Now I want you to specify priors that will dominate the posterior, i.e. they will eliminate any predicted difference between conditions.
+
+```{r}
+#| label: too-strict_priors
+
+# YOUR CODE HERE
+
+```

@@ -1,0 +1,191 @@
+---
+title: "session02 - homework - solutions"
+format: html
+editor: visual
+date: 2025-07-17
+author: Timo Roettger
+execute:
+  error: false
+  warning: false
+  message: false
+  cache: false
+bibliography: ../../resources/bibliography.bib
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_and_libraries
+#| echo: false
+
+# just run this code chunk
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, lme4, ggeffects)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+```
+
+# Exercise 1
+
+### Introduction to data
+
+We will be working with Quantese again, see `01_exercise.qmd` and the other data resources for a refresher.
+
+```{r}
+#| label: load-quantese
+
+quantese <- read_csv("../../data/quantese_naming_sim.csv") 
+
+# add log-transformed reaction time
+quantese <- quantese |> 
+  mutate(log_rt = log(rt))
+
+# have a look
+quantese
+
+```
+
+### (A) check the design and formulate a linear mixed effects model
+
+Imagine, the researchers wanted to test the following hypotheses:
+
+*"We hypothesize that log-transformed reaction times are affected by lexical frequency"*
+
+Run an appropriate linear mixed effects model to test this hypothesis. If you run into convergence issues, deal with them as you see fit.
+
+```{r}
+#| label: lmer_quantese
+
+# There are two classic dependencies here: participants and items
+# Let us first see if frequency is a manipulation within or across these grouping factors
+
+table(quantese$PartID, quantese$log_frequency)
+# seems as if we have observations for a wide range of frequencies for each participant
+
+table(quantese$ItemID, quantese$log_frequency)
+# however, each word comes only with one lexical frequency, which (duh!) makes sense of course
+
+# Given these patterns, we want to have random slopes for PartID and random intercepts for ItemID
+
+# formulate the corresponding LMER
+quant_lmer <- lmer(log_rt ~ log_frequency +
+                     (1 + log_frequency | PartID) +
+                     (1 | ItemID), 
+                    data = quantese)
+
+# does not converge, so we reduce complexity
+quant_lmer_red <- lmer(log_rt ~ log_frequency +
+                        (1 | PartID) +
+                        (1 | ItemID), 
+                      data = quantese)
+
+# converged but is obviously anti-conservative
+
+```
+
+### (B) interpret the model output
+
+Take your selected model, interpret the model coefficients and calculate p-values for the relevant predictor.
+
+```{r}
+#| label: pvalues_quantese
+
+# print summary
+summary(quant_lmer_red)
+
+# Interpretation: 
+# Intercept: When log_frequency is 0, estimated log(RT) is 6.7 ms
+# For each additional unit of log_frequency, estimated log(RT) decreases by 0.06. 
+
+# null model
+quant_lmer_red_null <- lmer(log_rt ~ 1 +
+                        (1 | PartID) +
+                        (1 | ItemID), 
+                        REML = FALSE,
+                      data = quantese)
+
+# null model
+quant_lmer_red_null <- lmer(log_rt ~ 1 +
+                        (1 | PartID) +
+                        (1 | ItemID), 
+                        REML = FALSE,
+                      data = quantese)
+
+anova(quant_lmer_red_null, quant_lmer_red)
+
+# Interpretation:
+# This effect is significant at an alpha level of 0.05, i.e. when assuming the null-hypothesis (i.e. the effect of log_frequency is zero), the observed or more extreme test statistics are sufficiently improbable (p < 0.0001) such that we can reject the null hypothesis.
+
+```
+
+### (C) Optional: plot predictions
+
+Plot the model predictions alongside a measure of uncertainty (standard error or 95% CI). If you can, plot the model predictions on top of the raw data.
+
+Estimating variance components for linear mixed effects models is mathematically not as straightforward as it is for simple linear models. We skip manual extraction for now and use the beautiful `ggeffects` package. Check their `predict_response()` function and use it to derive predictions and plot them.
+
+```{r}
+#| label: plot_prediction_quantese
+
+# we simply get our estimates and CIs using predict_response()
+mydf <- predict_response(quant_lmer, terms = "log_frequency") |> 
+  # to have clearer variable naming for our ggplot, we wrangle the output a bit
+  rename("log_frequency" = x)
+
+# plot 
+plot_pred <- 
+  ggplot(data = mydf, 
+       aes(x = log_frequency,
+          y = predicted)
+      ) +
+  # plot uncertainty as a ribbon
+  geom_ribbon(aes(ymin = conf.low,
+                  ymax = conf.high),
+             color = NA,
+             alpha = 0.2) +
+  # plot model estimates
+  geom_line(size = 2) +
+  # titles
+  labs(title = "Model estimates for log(RTs) as a function of lexical frequency",
+       subtitle = "error ribbons represent 95% confidence intervals",
+       y = "log(reaction times)\n",
+       x = "\nlog(lexical frequency)") +
+  theme_minimal()
+
+plot_pred
+
+# add data
+plot_pred + 
+  geom_point(data = quantese,
+             aes(x = log_frequency,
+                 y = log_rt),
+             alpha = 0.02)
+
+```
+
+### (D) write up results
+
+Write up your analysis and results accordingly.
+
+All data were analyzed with linear mixed models, using R [@R_program] and the package lme4 [@bates2015package] assuming a Gaussian error distribution. The model predicted log-transformed reaction times by log-transformed lexical frequency. We included random intercepts for both words and participants, and by-participant random slopes for the critical predictor frequency. This model did not converge, thus we removed the by-participant random slope to achieve model convergence. We calculated p-values with likelihood ratio tests comparing the full model against a null model (i.e. the model that does not include the critical predictor frequency).
+
+The model estimated that log-rt decreases by 0.06 for each unit of log-frequency (SE = 0.008). This effect was significant at an alpha level of 0.05. Thus, assuming that the frequency effect is zero, the test statistics or more extreme test statistics are sufficiently improbable to reject the null hypothesis (χ2(1) = 47, p \< 0.0001). However, given that the final model does not account for by-subject variability for the critical frequency effect, the model has to be considered anti-conservative and the inferential conclusion has to be taken with caution. Visual assessment of the by-subject variability, however, indicate that most subjects show a frequency effect in the same direction.
+
+# References
+
+<!-- References will auto-populate in the refs div below -->
+
+::: {#refs}
+:::
