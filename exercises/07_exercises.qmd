@@ -1,0 +1,134 @@
+---
+title: "session07 - exercises"
+format: html
+editor: visual
+date: 2025-12-17
+author: Timo Roettger
+execute:
+  error: false
+  warning: false
+  message: false
+  cache: true
+bibliography: ../../resources/bibliography.bib
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_libraries
+#| echo: false
+
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, tidybayes, brms, bayesplot, bayesrules)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+# options to increase efficiency of brms models (optional)
+options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# Introduction
+
+The main learning goals of this week's practical parts are:
+
+-   becoming familiar with assessing MCMC diagnostics
+-   learning how to address common convergence issues
+
+We will continue analyzing the data from @winter2013making.
+
+```{r}
+#| label: preprocessing
+
+# Load our datasets
+sim <- read_csv("../data/linguistic_similarity.csv")
+
+```
+
+We will use a decent version of the latest homework model (see `06_homework_solutions.qmd`). We square-root-transformed the distance measure. The model is saved already, so if you execute this chunk, it should not start sampling.
+
+```{r}
+#| label: sqrt-model
+
+sim <- sim |> 
+  mutate(sqrt_dist = sqrt(Distance))
+
+# some priors
+my_priors <- c(prior(normal(9, 3), class = 'Intercept'),
+               prior(normal(0, 3), class = 'b', coef = 'SemSimilar'))
+
+# run model
+xmdl_sqrt <- brm(sqrt_dist ~ Sem,
+            family = gaussian(),
+            file = "../../models/sqrt_sim.RDS",
+            prior = my_priors,
+            data = sim,
+            chains = 4,
+            cores = 4, 
+            iter = 2000,
+            warmup = 1000,
+            thin = 1,
+            seed = 42)
+
+```
+
+# (A) Assessing chain convergence
+
+Use the `mcmc_plot()` function to assess if the sampling chains have converged. What is your assessment? Do they look like healthy caterpillars.
+
+```{r}
+#| label: mcmc-plot
+
+# YOUR CODE HERE
+# YOUR ASSESSMENT HERE
+
+```
+
+# (B) Assessing chain convergence
+
+Double check that different chains yields similar posteriors with `mcmc_dens_overlay()` function. What is your assessment?
+
+```{r}
+#| label: mcmc-plot
+
+# YOUR CODE HERE
+# YOUR ASSESSMENT HERE
+
+```
+
+# (C) Checking convergence diagnostics
+
+Look at the model output and assess whether Rhat, and effective sample sizes (ESS) are satisfying
+
+```{r}
+#| label: convergence
+
+# model output
+xmdl_sqrt
+
+# Rhat values are ~ 1.00 
+# bulk ESS > 400,
+# tail ESS > 100
+
+# All good!
+
+```
+
+# References
+
+<!-- References will auto-populate in the refs div below -->
+
+::: {#refs}
+:::
