@@ -1,0 +1,377 @@
+---
+title: "session08 - exercises - solutions"
+format: html
+editor: visual
+date: 2025-07-17
+author: Timo Roettger
+execute:
+  error: false
+  warning: false
+  message: false
+  cache: true
+bibliography: ../resources/bibliography.bib
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_and_libraries
+#| echo: false
+
+# just run this code chunk
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, tidybayes, brms, bayestestR, modelr)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+# options to increase efficiency of brms models (optional)
+#options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# Introduction
+
+We will be working with Quantese again, see `01_exercise.qmd` and the other data resources for a refresher. In fact we will start where we left of in `07_homework.qmd`
+
+```{r}
+#| label: load-quantese
+
+quantese <- read_csv("../data/quantese_naming_sim.csv") 
+# add log-transformed reaction time
+quantese <- quantese |> 
+  mutate(log_rt = log(rt))
+
+# have a look
+quantese
+
+```
+
+We specify reasonable (weakly informative) priors...
+
+```{r}
+#| label: priors-quantese
+
+# define formula
+quant_formula <- bf(log_rt ~ log_frequency +
+                     (1 + log_frequency | PartID) +
+                     (1 | ItemID))
+
+# get priors
+get_prior(quant_formula, quantese)
+
+# specify priors
+my_priors <- c(prior(normal(6.5,2.5), class = 'Intercept'),
+               prior(normal(0,2.5), class = 'b'))
+
+```
+
+And run the model. I stored the model for you this time, so that you do not need to sample on your machine to speed things up.
+
+```{r}
+#| label: model_quantese
+#| cache: TRUE
+
+xmdl_quant <- brm(quant_formula,
+                  family = gaussian(),
+                  prior = my_priors,
+                  data = quantese,
+                  file = "../../models/quantese_mdl.RDS",
+                  chains = 4,
+                  cores = 4, 
+                  iter = 2000,
+                  warmup = 1000,
+                  thin = 1,
+                  seed = 42)
+
+```
+
+# Inference walkthrough
+
+Okay, now we get into inference...
+
+## Interpret model
+
+I consider interpreting the model as part of the inferential process, and of course we get nice summary statistics about uncertainty in our parameters in the output.
+
+In this exercise we skip the MCMC diagnostics etc. since we have done this before, but it would usually be good to assess this first. Always only interpret a model that you are certain has been estimated correctly. (And this one doesn't seem to indicate any problems since Rhat = 1.0 and we have loads of effective samples)
+
+```{r}
+#| label: model_interpretation_quantese
+
+xmdl_quant
+
+```
+
+We can see that the posterior mean of the log frequency effect is around -0.06 Hz, with a credible interval ranging from around -0.07 and -0.04. Seems as if we're measuring the effect fairly precisely if the 95% interval surrounds the mean with just +/- 0.02 log units. The data is compatible with a range of slopes, but the values in that range are all negative, and mostly within \[-0.07 and -0.04\].
+
+You can also see that the 95% credible interval doesn't overlap with zero.
+
+## Visualize posterior
+
+You should never just rely on summary statistics of uncertainty, but always assess the posteriors visually directly, at a bare minimum for your main effect in question.
+
+This is also to make sure that you don't have oddly shaped posteriors. With well-identified generalized linear models and lots of data, we usually get nice normal shaped posteriors, but it's always worth checking.
+
+Here, we use `spread_draws()` on the `b_log_frequency` coefficient to make a plot of the posterior distribution, e.g., using `stat_halfeye()` which also draws in the mean, 50%- and 95% credible interval.
+
+We add a `geom_vline()` at 0 (with `linetype` dashed) for better orientation along the x-axis.
+
+```{r}
+#| label: plot_posterior_quantese
+
+xmdl_quant |> 
+  spread_draws(b_log_frequency) |> 
+  ggplot(aes(x = b_log_frequency)) +
+   stat_halfeye(fill = 'darkorchid3') +
+   geom_vline(xintercept = 0, lty = 'dashed') +
+   scale_x_continuous(limits = c(-0.1, 0.1)) +
+   labs(x = "log(frequency)",
+        y = "") +
+   theme_minimal()
+
+```
+
+Now while this visualization is directly reflecting our inferential process and the uncertainty surrounding the critical model parameter (i.e. the slope of log(frequency) against log(RT)), we are much more used to a different way of visualizing results. Usually we visualize results by plotting the estimates for different conditions or in our case along relevant predictor dimension. We do that with the following code. The functions `data_grid()` and `add_epred_draws()` do something similar to our `predict()` workflow in the past. We color code different ribbons around the mean estimate to indicate different levels of uncertainty.
+
+```{r}
+#| label: plot_posterior_conditions_quantese
+
+quantese |> 
+  data_grid(log_frequency = seq_range(log_frequency, n = 50)) |> 
+  add_epred_draws(xmdl_quant, re_formula = NA) |> 
+  ggplot(aes(x = log_frequency,
+             y = .epred)) +
+  stat_lineribbon(color = "white") +
+  scale_fill_brewer(palette = "Greys") +
+  labs(x = "log(frequency)",
+       y = "log(reaction time)") +
+  theme_minimal()
+
+```
+
+And as a cherry on top, let's plot them both into an un-transformed scale. For that we just have to back transform our log units by exponentiating them, i.e. using `exp()`.
+
+```{r}
+#| label: plot_posterior_conditions_quantese_2
+
+quantese |> 
+  data_grid(log_frequency = seq_range(log_frequency, n = 50)) |> 
+  add_epred_draws(xmdl_quant, re_formula = NA) |> 
+  mutate(frequency = exp(log_frequency),
+         .epred_exp = exp(.epred)) |> 
+  ggplot(aes(x = frequency,
+             y = .epred_exp)) +
+  stat_lineribbon(color = "white") +
+  scale_fill_brewer(palette = "Greys") +
+  labs(x = "lexical frequency",
+       y = "reaction time in ms") +
+  theme_minimal()
+
+```
+
+How cool? Very. Now we get a more intuitive understanding of how frequency and reaction time relate to each other, based on our model, our data, and our prior assumptions.
+
+## Probability of direction (pd)
+
+`p_direction()` computes the Probability of Direction (pd, also known as the Maximum Probability of Effect - MPE). It varies between 50% and 100% (i.e., 0.5 and 1) and can be interpreted as the probability (expressed in percentage) that a parameter (described by its posterior distribution) is strictly positive or negative (whichever is the most probable). Although differently expressed, this index is fairly similar (i.e., is strongly correlated) to the frequentist's p-value.
+
+Relationship with the p-value: If the priors are uniform (i.e. flat) the pd corresponds to the frequentist's two-sided p-value through the formula p-value = 2\*(1-pd/100).
+
+Within this model, we can use the probability of direction to assess the posterior probability that log(frequency) negatively affects log(reaction times).
+
+```{r}
+#| label: posterior_probability_quantese
+
+xmdl_quant |> 
+  spread_draws(b_log_frequency) |> 
+  select(b_log_frequency) |> 
+  p_direction()
+
+```
+
+This can be paraphrased as "Given this model, the data, and our priors, the posterior probability of log frequency decreasing log reaction time is 100%; i.e. p(b\<0) = 1.0."
+
+It is possible for this to be exactly 1.0 when *all* posterior samples are beneath the stated value. In this case, not a single posterior sample of the coefficient was positive. In other words, higher frequency leading to higher reaction times is not very plausible.
+
+## Bayes Factor
+
+We now compute the Bayes factors against the point-null value, bases on prior and posterior samples of a single parameter. This Bayes factor indicates the degree by which the mass of the posterior distribution has shifted further away from or closer to the null value (relative to the prior distribution), thus indicating if the null value has become less or more likely given the observed data.
+
+For this next step we need to extract the posteriors of the model before and after seeing the data. The latter we already have:
+
+```{r}
+#| label: posterior_samples_quantese
+
+posteriors <- xmdl_quant |> 
+  spread_draws(b_log_frequency) |> 
+  select(b_log_frequency)
+
+```
+
+To extract the posteriors of the model before seeing the data, we need to refit the model from above with the following argument: `sample_prior = "only"` which runs the model solely based on the priors. Again, for your convenience, I have already done this and stored the model for you to retrieve.
+
+```{r}
+#| label: prior_samples_quantese
+#| cache: TRUE
+
+xmdl_quant_priors <- brm(quant_formula,
+                  family = gaussian(),
+                  prior = my_priors,
+                  sample_prior = "only",
+                  data = quantese,
+                  file = "../../models/quantese_priors_mdl.RDS",
+                  chains = 4,
+                  cores = 4, 
+                  iter = 2000,
+                  warmup = 1000,
+                  thin = 1,
+                  seed = 42)
+
+priors <- xmdl_quant_priors |> 
+  spread_draws(b_log_frequency) |> 
+  select(b_log_frequency)
+
+```
+
+Now we are good to go to run our bayes factor against the null value:
+
+```{r}
+#| label: bayes_factor_quantese
+
+bayesfactor_parameters(posteriors, priors, direction = "two-sided", null = 0)
+
+```
+
+First off, the function warns us that BFs might not be very precise without really large sample numbers (>40000). Keep that in mind. Since I eventually want you to calculate BFs over intervals rather than point-values, we gloss over this problem for now.
+
+Second, we get a whopping BF of 1.98e+03. That means, given the data, the model and the priors, the alternative hypothesis that beta is not 0 is `1980` times more probable than the null hypothesis (beta = 0).
+
+## Write-up
+
+We can write our interpretation up like this (note that I added some references here):
+
+Posterior distributions of the model indicate that with every unit of log-transformed frequency, log-transformed reaction times are estimated to decreases by an average of -0.06 \[95% Credible Interval: -0.07 to -0.04\].
+
+100% of the posterior samples are negative, indicating that positive values are implausible (given the data, the model, and priors).
+
+Subsequently, we calculate the Savage-Dickey density ratio [@DickeyLientz1970-The-Weighted-Li; @WagenmakersLodewyckx2010-Bayesian-hypoth; @roettgermeaningful], i.e., we relate the evidence (the probability of the posterior distribution at point-zero) for the model based on the priors only (i.e., before seeing the data) to the evidence for the model based on both priors and likelihood (i.e., after seeing the data) [e.g., @WetzelsGrasman2010-An-encompassing]. The Savage-Dickey method lets us assess evidence for and against a null hypothesis using Bayes factor. Here, the Bayes factor indicates the degree by which the mass of the posterior distribution has shifted further away from the point null value (relative to the prior distribution). Our analysis yields a Bayes Factor of 1980, indicating that the probability of the effect of log-transformed frequency being point null has decreased substantially, suggesting *extreme* evidence for the alternative hypothesis that the effect of log-transformed frequency is point null[@lee-wagenmakers_Bayesian_book_2014].
+
+# Exercise
+
+We will be re-analyzing the data from @winter2013making.
+
+```{r}
+#| label: preprocessing_sim
+
+# Load our datasets
+sim <- read_csv("../../data/linguistic_similarity.csv")
+sim
+
+```
+
+We worked with this data in `06_homework.qmd`. Remember, researchers are interested in whether semantic similarity between the cities affects how close/far apart participants draw the cities on the map.
+
+## (a) Rerun the model
+
+Specify priors and rerun the model to explore this research question according to your work in `06_homework.qmd` (or `06_homework_solutions.qmd`).
+
+```{r}
+#| label: spec_priors_sim
+
+my_priors <- #YOUR PRIORS HERE
+```
+
+```{r}
+#| label: model_sim
+#| cache: TRUE
+
+xmdl_sim <- #YOUR MODEL HERE
+```
+
+## (b) Interpret the model
+
+Now interpret the model relative to the research question and describe uncertainty
+
+```{r}
+#| label: interpret_sim
+
+# YOUR INTERPRETATION HERE
+
+```
+
+## (c) Visualize posterior
+
+Visualize the posterior distribution of the relevant coefficient and draw in a reference line for comparing it against zero.
+
+```{r}
+#| label: plot_post_sim
+
+#YOUR PLOT HERE
+
+```
+
+## (d) OPTIONAL: Visualize posteriors of individual levels
+
+Now visualize the posterior estimates of the semantically similar vs. the semantically different condition.
+
+```{r}
+#| label: plot_post_sim_conditions
+
+#YOUR PLOT HERE
+
+```
+
+## (e) Describe posteriors relative to reference point
+
+Now describe the relationship between the posterior distribution extracted in (c) above and the reference value zero.
+
+```{r}
+#| label: describe_ref_sim
+
+# YOUR DESCRIPTION HERE
+
+```
+
+## (f) Calculate the posterior probability of direction
+
+```{r}
+#| label: pd_sim
+
+# YOUR CODE HERE
+
+```
+
+## (g) Calculate the Bayes Factor
+
+Compute the Bayes factors against the point-null value, bases on prior and posterior samples of the critical parameter using the Savage-Dickey Method.
+
+```{r}
+#| label: posterior_samples
+#| cache: TRUE
+
+# YOUR CODE HERE
+
+```
+
+## (h) Write up your results
+
+YOUR WRITE UP HERE. 
+
+# References
+
+<!-- References will auto-populate in the refs div below -->
+
+::: {#refs}
+:::

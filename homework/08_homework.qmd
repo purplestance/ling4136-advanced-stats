@@ -1,0 +1,129 @@
+---
+title: "session08 - homework"
+format: html
+editor: visual
+date: 2025-07-17
+author: Timo Roettger
+execute:
+  error: false
+  warning: false
+  message: false
+  cache: true
+bibliography: ../resources/bibliography.bib
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_and_libraries
+#| echo: false
+
+# just run this code chunk
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, tidybayes, brms, bayesplot, bayestestR, modelr)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+# options to increase efficiency of brms models (optional)
+#options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# Exercise
+
+We will be re-analyzing the data from @winter2013making.
+
+```{r}
+#| label: preprocessing_sim
+
+# Load our datasets
+sim <- read_csv("../data/linguistic_similarity.csv") |> 
+  mutate(Sem = as.factor(Sem),
+         Phon = as.factor(Phon))
+sim
+
+```
+
+We will now retrace the original article's complete analysis. In their original analysis, they were interested in whether (a) semantic similarity between cities, (b) phonological similarity between cities, and (c) their interaction affects how close/far apart participants draw the cities.
+
+## (a) Specify Priors
+
+Specify the model formula and appropriate weakly informative priors for all relevant predictors. Contrast-code the predictors.
+
+```{r}
+#| label: model_formula_sim
+
+my_priors <- #YOUR PRIORS HERE
+
+```
+
+## (b) Run the appropriate model for the research question
+
+```{r}
+#| label: model_sim
+
+#YOUR MODEL HERE
+
+```
+
+## (c) Posterior predicive check
+
+Check the overall model fit with posterior predictive checks. If the model does not fit the data well, fix the problem (check `06_homework_solutions.qmd` for inspiration).
+
+```{r}
+#| label: model_fit
+
+#YOUR CODE HERE
+
+```
+
+## (d) Assess sampling diagnostics
+
+Check that chains are reasonably mixed and that sampling yielded a sufficient number of effective sample size. If there are issues, address them accordingly.
+
+```{r}
+#| label: sampling_diagnostics
+
+# YOUR CODE HERE
+
+```
+
+## (e) Interpret the results
+
+Now interpret the model relative to the research question and describe uncertainty, visualize posteriors, calculate posterior probabilities of direction, and calculate Bayes Factors for evidence for and against the posterior coefficients being point zero.
+
+(Note: When you want to extract interaction terms like `b_Sem1:Phon1`, you have to put single quotation marks around them because R struggles with interpreting the colon)
+
+```{r}
+#| label: interpret_sim
+
+#YOUR CODE HERE
+
+```
+
+## (g) Write up your entire analysis:
+
+YOUR WRITE UP HERE
+
+## OPTIONAL (h) compare your interpretation to the original findings
+
+YOUR COMPARISON HERE
+
+# References
+
+<!-- References will auto-populate in the refs div below -->
+
+::: {#refs}
+:::
