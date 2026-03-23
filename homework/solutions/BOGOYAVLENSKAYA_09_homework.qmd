@@ -1,0 +1,177 @@
+---
+title: "session09 - exercises"
+format: html
+editor: visual
+date: 2025-07-17
+author: Timo Roettger
+execute:
+  error: false
+  warning: false
+  message: false
+  cache: false
+bibliography: ../resources/bibliography.bib
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_and_libraries
+#| echo: false
+
+# just run this code chunk
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, lme4)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+```
+
+# Introduction
+
+The main **learning goals** of this week's practical parts are:
+
+-   getting an intuition about the gap between verbal hypotheses and formal hypotheses
+
+# The data
+
+In this dataset, we will be analyzing data from @kilpatrick2023random:
+
+In a nutshell, the authors were interested in whether there is a relationship between the form of a word and its meaning by looking at Japanese Pokemon names.
+
+Let's have a look at the data:
+
+```{r}
+#| label: data
+
+# Load in the dataset and already remove irrelevant stuff:
+pokemon <- read_csv('../../data/Japanese_Pokemon_simplified.csv') |> 
+  select(-`Sum of values`, -Checksum)
+
+# check data set:
+pokemon
+
+```
+
+What you see here are the following variables:
+
+Variables:
+
+`Designation`: source of Pokemon name. Official = the official names of Japanese Pokemon; Elicited = elicited names from naive participants.
+
+`pokemonname`: Pokemon name in Japanese
+
+`Output`: Pokemon name in transcribed form
+
+`Length`: Amount of phones in name
+
+`Evolution`: Evolution stage of Pokemons: 1 = pre-evolution; 2 = post-evolution, NA = do not evolve
+
+`f` = amount of /f/ sounds in name
+
+`T` = amount of /T/ sounds in name
+
+...
+
+and many more different sounds.
+
+Now imagine researchers want to use this data set to *test* the following hypothesis:
+
+*The evolution stage of a Pokemon is reflected in aspects of its Japanese name*
+
+# Exercise
+
+## A: Preregister your analysis
+
+Take the hypothesis and what you know about the data set and its structure to predict a very specific relationship that you can test. You are allowed to look at the dataset, but do not look at concrete relationships that might be a manifestation of the hypothesis.
+
+My preregistration:
+
+My hypothesis is the following: Pokemon in a higher evolution stage have longer Japanese names.
+
+Dependent variable: Length
+
+Predictor: Evolution
+
+Null hypothesis: There is no relationship between Length and Evolution, i.e., the length of the Japanese name of a Pokemon doesn't reflect its evolution stage.
+
+To test the hypothesis I will run the following analysis:
+
+pok \<- na.omit(pokemon)
+
+pok \<- pok \|\>\
+mutate(Evolution = factor(Evolution,\
+levels = c(1, 2),\
+labels = c("pre", "post")))
+
+model1 \<- lm(Length \~ Evolution, data = pok)
+
+summary(model1)
+
+## B: Run your preregistered analysis
+
+Run the preregistered analysis made in (A) above and interpret your results relative to the hypothesis.
+
+```{r}
+
+pok <- na.omit(pokemon)
+
+pok <- pok |>mutate(Evolution = factor(Evolution,levels = c(1, 2),labels = c("pre", "post")))
+
+model1 <- lm(Length ~ Evolution, data = pok)
+
+summary(model1)
+
+# The intercept is 6.98, meaning that the average lenght of a name of a pre-evo Pokemon is 7 phones Evolutionpost is 1.28, meaning that post-evo names are on average 1.28 phones longer. The effect is statifically significant (<2e-16), but Adjusted R-squared is 0.09782, meaning that the model explains only 10% of the variation in the data, which is very small.
+
+
+```
+
+## C: Show contradicting results
+
+Now explore the data and find two alternative way to test the research hypothesis that yield convincing results that go in opposite directions based of your findings in (A). Justify all your choices verbally after the fact.
+
+```{r}
+# exploring the data
+names(pok)
+
+pok |> group_by(Evolution) |> summarise(across(c(f, T, b, d, g, G, z, j, p, t, C, k, K, s, S, h, m, M, n, N, r, L, y, w, a, i, u, e, o, Q, R, X, H, v, P, c), sum, na.rm = TRUE))
+
+#seems that some letters like p, k, and C less more common in the post-evo names. let's see if it is significant
+
+model_p <- lm(p ~ Evolution, data = pok)
+summary(model_p)
+
+model_k <- lm(k ~ Evolution, data = pok)
+summary(model_k)
+
+model_C <- lm(C ~ Evolution, data = pok)
+summary(model_C)
+
+# Only model_C is significant (p-value: 0.02243) but Adjusted R-squared is 0.002642, so only 3 percent of the data is explained.
+
+# Summarizing all models, when I tested name length, I found that post-evo Pokemon have significantly longer names than pre-evo. However, when I tested the number of C phones, I found the opposite pattern, namely that post-evo Pokemon have significantly fewer C phones. No significant findings for phones p and k in terms of its effect on Evolution of a Pokemon. 
+```
+
+## D: Researcher degrees of freedom
+
+Note down all dimensions of researcher degrees of freedom that make the mapping of the hypothesis onto your data analysis vague. How many possible combinations can you think of?
+
+The original hypothesis is vague and does not specify how it should be tested - we don't know which aspects of the name should be analysed. We could test not only the length itself but each consonant separately, or by grouping them into, for example, voiced consonants or combinations of the consonants. We could also analyse only official names, only elicited names or both. There is also no information on which statistical model should be used.
+
+# References
+
+<!-- References will auto-populate in the refs div below -->
+
+::: {#refs}
+:::
