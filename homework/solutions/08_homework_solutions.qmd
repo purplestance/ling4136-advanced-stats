@@ -1,0 +1,266 @@
+---
+title: "session08 - homework - solutions"
+format: html
+editor: visual
+date: 2025-07-17
+author: Timo Roettger
+execute:
+  error: false
+  warning: false
+  message: false
+  cache: true
+bibliography: ../../resources/bibliography.bib
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_and_libraries
+#| echo: false
+
+# just run this code chunk
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, tidybayes, brms, bayesplot, bayestestR, modelr)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+# options to increase efficiency of brms models (optional)
+#options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# Exercise
+
+We will be re-analyzing the data from @winter2013making.
+
+```{r}
+#| label: preprocessing_sim
+
+# Load our datasets
+sim <- read_csv("../../data/linguistic_similarity.csv") |> 
+  mutate(Sem = as.factor(Sem),
+         Phon = as.factor(Phon))
+sim
+
+```
+
+We will now retrace the original article's complete analysis. In their original analysis, they were interested in whether (a) semantic similarity between cities, (b) phonological similarity between cities, and (c) their interaction affects how close/far apart participants draw the cities.
+
+## (a) Specify Priors
+
+Specify the model formula and appropriate weakly informative priors for all relevant predictors. Contrast-code the predictors.
+
+```{r}
+#| label: model_formula_sim
+
+# Since we assess both main effects and a interaction, we should contrast code the predictors
+contrasts(sim$Sem) <- contr.sum(2)/2
+contrasts(sim$Phon) <- contr.sum(2)/2
+
+mdl_formula = bf(Distance ~ Sem * Phon)
+
+```
+
+```{r}
+#| label: spec_priors_sim
+
+# what priors need to be set
+get_prior(mdl_formula, sim)
+
+# we specify super diffuse priors
+my_priors <- c(prior(normal(107, 50), class = 'Intercept'),
+               prior(normal(0, 50), class = 'b', coef = 'Phon1'),
+               prior(normal(0, 50), class = 'b', coef = 'Sem1'),
+               prior(normal(0, 50), class = 'b', coef = 'Sem1:Phon1'))
+
+```
+
+## (b) Run the appropriate model for the research question
+
+```{r}
+#| label: model_sim
+
+xmdl_sim <- brm(Distance ~ Sem * Phon,
+            family = gaussian(),
+            prior = my_priors,
+            data = sim,
+            seed = 42)
+```
+
+## (c) Posterior predicive check
+
+Check the overall model fit with posterior predictive checks. If the model does not fit the data well, fix the problem (check `06_homework_solutions.qmd` for inspiration).
+
+```{r}
+#| label: model_fit
+
+pp_check(xmdl_sim, ndraws = 50)
+
+```
+
+The mismatch between the real data (dark blue line) and the simulated data (light blue lines) is pretty bad. The model predicts many negative values. Additionally, the model does not account for the right tale of the observed data. This might make sense when we consider the constraints of the presented map and the constraints of the task. It might be more intuitive to place the cities somewhat central on the map which results in less Distance. Very large differences might be less natural to participants.
+
+```{r}
+#| label: transform
+
+# the observed data have a right tale, so I chose a gentle transformation like the square root transform
+sim <- sim |> 
+  mutate(sqrt_dist = sqrt(Distance))
+
+# some priors
+my_priors <- c(prior(normal(9, 3), class = 'Intercept'),
+               prior(normal(0, 3), class = 'b'))
+
+# run model
+xmdl_sqrt <- brm(sqrt_dist ~ Sem * Phon,
+            family = gaussian(),
+            prior = my_priors,
+            data = sim,
+            seed = 42)
+
+# posterior_predictive check
+pp_check(xmdl_sqrt, ndraws = 50)
+
+# looks much better
+
+```
+
+## (d) Assess sampling diagnostics
+
+Check that chains are reasonably mixed and that sampling yielded a sufficient number of effective sample size. If there are issues, address them accordingly.
+
+```{r}
+#| label: sampling_diagnostics
+
+mcmc_plot(xmdl_sqrt, type = "trace") # looks good, i.e. like a catterpillar
+mcmc_dens_overlay(xmdl_sqrt) # looks good
+xmdl_sqrt # rhat and ESS look all good
+
+```
+
+## (e) Interpret the results
+
+Now interpret the model relative to the research question and describe uncertainty, visualize posteriors, calculate posterior probabilities of direction, and calculate Bayes Factors for evidence for and against the posterior coefficients being point zero.
+
+(Note: When you want to extract interaction terms like `b_Sem1:Phon1`, you have to put single quotation marks around them because R struggles with interpreting the colon)
+
+```{r}
+#| label: interpret_sim
+
+xmdl_sqrt
+# the grand average of Distance measures is 8.5 (intercept) [95% CrI 8.2 - 8.7], corresponding to 71.8mms
+# semantically similar cities are 0.7 sqrt units closer to each other [95% CrI 0.2 - 1.2]
+# phonologically similar cities are 0.4 sqrt units further away from each other [95% CrI -0.9 - 0.04]
+# the interaction term, the difference of differences, is -0.2 sqrt units [95% CrI -1.1 - 0.8]
+
+```
+
+```{r}
+#| label: plot_post_sim
+
+xmdl_sqrt |> 
+  gather_draws(b_Sem1, b_Phon1, `b_Sem1:Phon1`) |> 
+  # plot
+  ggplot(aes(x = .value,
+             y = .variable)) +
+    stat_halfeye() +
+    geom_vline(xintercept = 0,
+               lty = "dashed") +
+  labs(x = "posterior estimate for sqrt-transformed distance",
+       y = "") +
+  theme_minimal()
+
+```
+
+```{r}
+#| label: describe_ref_sim
+
+# For semantic similarity, most posterior samples are positive but they overlap with zero, i.e. negative values remain somewhat plausible values. Given the model, the data and the priors, it seems plausible that semantically similar cities are drawn closer to each other than semantically different cities
+# For phonological similarity, most posterior samples are negative but they also overlap with zero, i.e. positive values remain somewhat plausible value. Given the model, the data and the priors, it seems somewhat plausible that phonologically similar cities are drawn further away from each other than phonologically different cities. 
+# For the interaction term, negative posterior samples are slightly more plausible than positive one but the posterior distribution heavily overlaps with zero. Already, we can say that given the model, the data and the priors, it seems implausible that there is an interaction between the two variables.
+
+```
+
+```{r}
+#| label: pd_sim
+
+xmdl_sqrt |> 
+  spread_draws(b_Sem1, b_Phon1, `b_Sem1:Phon1`) |> 
+  select(b_Sem1, b_Phon1, `b_Sem1:Phon1`) |> 
+  p_direction()
+
+# The posterior probability of direction for Sem is 99.8%
+# The posterior probability of direction for Phon is 96.7%
+# The posterior probability of direction for the interaction term is 65%
+
+# Confirming the visual assessment from above.
+
+```
+
+```{r}
+#| label: bayes_factor
+#| cache: TRUE
+
+# store posteriors
+posteriors_sim <- xmdl_sqrt |> 
+  spread_draws(b_Sem1, b_Phon1, `b_Sem1:Phon1`) |> 
+  select(b_Sem1, b_Phon1, `b_Sem1:Phon1`)
+
+# rerun model with priors only
+xmdl_sqrt_priors <- brm(sqrt_dist ~ Sem * Phon,
+            family = gaussian(),
+            sample_prior = "only",
+            prior = my_priors,
+            data = sim,
+            seed = 42)
+
+# store priors
+priors_sim <- xmdl_sqrt_priors |> 
+  spread_draws(b_Sem1, b_Phon1, `b_Sem1:Phon1`) |> 
+  select(b_Sem1, b_Phon1, `b_Sem1:Phon1`)
+
+# calc BF
+bayesfactor_parameters(posteriors_sim, priors_sim, direction = "two-sided", null = 0)
+
+# The BF for Sem is 3.4%
+# The BF for Phon is 0.5%
+# The BF for the interaction term is 0.2%
+
+```
+
+## (g) Write up your entire analysis:
+
+Posterior distributions of the model indicate that the square root transformed distance between semantically similar and different cities is 0.7 \[95% CrI: 0.2 to 1.2\] with semantically similar cities being draw closer to each other. 99.8% of the posterior samples are positive, indicating that negative values are rather implausible (given the data, the model, and priors).
+
+The posterior estimates for square root transformed distance between phonologically similar and different cities is -0.4 \[95% CrI: -0.9 - 0\] with phonologically similar cities being drawn further away from each other. 96.7% of the posterior samples are negative, indicating that positive values are more implausible than negative ones (given the data, the model, and priors).
+
+The posterior estimates for the square root transformed interaction effect is -0.2 \[95% CrI: -1.1 - -0.8\]. 65% of the posterior samples are negative, indicating that negative posteriors values are only slightly more plausible than positive ones (given the data, the model, and priors).
+
+Subsequently, we calculated the Savage-Dickey density ratio for each parameter [@DickeyLientz1970-The-Weighted-Li; @WagenmakersLodewyckx2010-Bayesian-hypoth; @roettgermeaningful], i.e., we relate the evidence (the probability of the posterior distribution at point null) for the model based on the priors only (i.e., before seeing the data) to the evidence for the model based on both priors and likelihood (i.e., after seeing the data) [e.g., @WetzelsGrasman2010-An-encompassing]. The Savage-Dickey method lets us assess evidence for and against a null hypothesis using Bayes factor.
+
+Here, the Bayes factor indicates the degree by which the mass of the posterior distribution has shifted further away from the point null value (relative to the prior distribution). Our analysis yields a yields *moderate* evidence *against the null* for semantic similarity (BF = 3.4), *anecdotal* evidence *for the null* for phonological similarity (BF = 0.5), and *moderate* evidence *for the null* for the interaction term (BF = 0.18).
+
+Given the degree of uncertainty observed for the posterior estimates and the Bayes Factors, we would have to remain rather skeptical that distance is affected by these factors. At best we can shift our believe slightly towards expecting semantic similarity to affect participant's choices, as well as towards expecting no interaction between phonological and semantic similarity. Our results are largely inconclusive.
+
+## OPTIONAL (h) compare your interpretation to the original findings
+
+The original finding use the null-hypothesis significance testing framework. Based on this framework the authors confidently conclude that semantic similarity affects distance, while neither phonological distance nor the interaction affects distance. This confidence is not warranted. One of the reasons for the discrepancy lies in the fact that the original model violated assumptions of the linear model they used (residuals were not normally distributed). A transformation of the dependent variable was in order to avoid biased estimates. Second, inference through null-hypothesis significance testing is inherently anti-conservative and the decision procedure does not allow for a continuous assessment of evidence.
+
+# References
+
+<!-- References will auto-populate in the refs div below -->
+
+::: {#refs}
+:::

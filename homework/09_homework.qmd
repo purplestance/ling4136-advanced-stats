@@ -55,7 +55,7 @@ Let's have a look at the data:
 #| label: data
 
 # Load in the dataset and already remove irrelevant stuff:
-pokemon <- read_csv('../data/Japanese_Pokemon.csv') |> 
+pokemon <- read_csv('../data/Japanese_Pokemon_simplified.csv') |> 
   select(-`Sum of values`, -Checksum)
 
 # check data set:
@@ -69,7 +69,7 @@ Variables:
 
 `Designation`: source of Pokemon name. Official = the official names of Japanese Pokemon; Elicited = elicited names from naive participants.
 
-`pokemonname`: Pokemon name in Japanese
+(`pokemonname`: Pokemon name in Japanese) removed in simplified data file
 
 `Output`: Pokemon name in transcribed form
 
