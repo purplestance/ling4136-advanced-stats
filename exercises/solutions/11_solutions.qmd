@@ -1,0 +1,293 @@
+---
+title: "session11 - exercises - solutions"
+format: html
+editor: visual
+date: 2025-07-17
+author: Timo Roettger
+execute:
+  error: false
+  warning: false
+  message: false
+  cache: true
+bibliography: ../../resources/bibliography.bib
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_and_libraries
+#| echo: false
+
+# just run this code chunk
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, tidybayes, brms, ggdist, bayestestR, modelr)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+# options to increase efficiency of brms models (optional)
+#options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# Introduction
+
+We will be analyzing the data from @winter2013making.
+
+```{r}
+#| label: preprocessing
+
+# Load our datasets
+sim <- read_csv("../../data/linguistic_similarity.csv")
+
+```
+
+A reminder: In this study, they investigated the conceptual structure of the metaphor “SIMILARITY IS PROXIMITY.” They did a series of experiments in which they investigated whether participants judge entities to be closer to each other when they are thought to be more similar. They presented participants with descriptions of two cities. These cities either sounded similarly or they sounded differently (`Phon`). Moreover, the descriptions depicted the cities as either semantically similar or different (`Sem`). After reading both descriptions and seeing both names, participant had to draw into a map and had to randomly guess where these two cities are located. The authors measured the `Distance` between the two cities for each participant in millimeters.
+
+The researchers hypothesize that semantic similarity between the cities affects how close/far apart participants draw the cities. We have modeled this several times in the past, so here I will use a simplified model. Note that we do not transform the data here, because we want to use the raw distance measures which are easier to intuit about. However, be aware that transforming the raw distance measures was justified by the data distributions (check `06_homework_solutions.qmd`). For now, we ignore this complication.
+
+```{r}
+#| label: model_formula
+
+# store model formula
+mdl_formula = bf(Distance ~ Sem)
+
+```
+
+```{r}
+#| label: spec-priors
+
+# some weakly informative priors 
+my_priors <- c(prior(normal(100,50), class = 'Intercept'),
+               prior(normal(0, 50), class = 'b', coef = 'SemSimilar'))
+
+```
+
+```{r}
+#| label: run-model
+
+# run model
+xmdl <- brm(Distance ~ Sem,
+            family = gaussian(),
+            prior = my_priors,
+            file = "../../models/sim_sesoi",
+            data = sim,
+            seed = 42)
+
+```
+
+Now let's look at the posteriors to remind us on these parameters estimates.
+
+```{r}
+#| label: posteriors
+
+# look at posteriors for the two conditions
+posteriors <- 
+  xmdl |> 
+  # extract samples for both parameters (intercept and difference between groups)
+  spread_draws(b_Intercept, b_SemSimilar) |> 
+  # calculate the values for semantically similar and different cities
+  mutate(SemDiff = b_Intercept,
+         SemSim = b_Intercept + b_SemSimilar) |> 
+  # remove all the columns except those
+  select(SemDiff, SemSim) |> 
+  # change data format from wide to a long format
+  pivot_longer(everything(),
+               names_to = "Condition",
+               values_to = "Distance") 
+
+# plot
+posteriors |> 
+  ggplot(aes(x = Distance,
+             fill = Condition)) +
+    geom_density() +
+    labs(x = "Posterior estimates for mean distance in millimeters") +
+    facet_wrap(~Condition, ncol = 1) +
+    scale_fill_manual(values = c("purple", "orange"))
+
+```
+
+The two posterior distributions have different locations, but they are also overlapping a bit. A first hint that we cannot be completely certain that the two conditions are credibly different. Let's look at the parameter that represents the difference between these two conditions:
+
+```{r}
+#| label: posteriors-diff
+
+xmdl |> 
+  spread_draws(b_SemSimilar) |> 
+  ggplot(aes(x = b_SemSimilar)) +
+    stat_halfeye() +
+    labs(x = "Posterior estimates for mean difference between conditions")
+
+```
+
+You can see that the distributions covers mostly negative values, i.e. semantically similar cities have a smaller distance than semantically different cities. But there is an overlap with zero, right?
+
+Also, not every difference between conditions seems meaningful. For example, the researchers measured distance with a ruler which likely had a minimum precision of 1 millimeter. It is thus reasonable to ask, how much of the posterior distribution is above that precision minimum? We use this precision minimum as our smallest effect size of interest.
+
+```{r}
+#| label: posteriors-sesoi
+
+# plot
+xmdl |> 
+  spread_draws(b_SemSimilar) |> 
+  ggplot(aes(x = b_SemSimilar)) +
+    stat_halfeye() +
+    labs(x = "Estimated mean difference between conditions") +
+    geom_vline(xintercept = c(-1,1),
+               lty = "dashed")
+
+```
+
+It looks like the majority of values are outside of the SESOI as defined above. That's a start. Now let us actually test the researchers hypothesis in an (arguably) meaningful way, following @roettgermeaningful.
+
+We define a region of practical equivalence (ROPE), i.e. a region around 0 that we consider practically equivalent to zero. In other words, differences between conditions that we do not consider meaningful. In our case, we consider the region between -1 to 1 mm practically equivalent to zero because if we cannot reliably measure such a distance, it cannot be a meaningful difference (so we argue at least).
+
+```{r}
+#| label: rope
+
+# define our ROPE
+rope <- c(-1,1)
+
+```
+
+Now we use the `bayesfactor_rope()` function to calculate the Bayes factor. The Bayes factor represents the shift in believe towards the alternative or null hypothesis after seeing the data.
+
+```{r}
+#| label: BF-1
+
+BF_1 <- 
+  bayesfactor_rope(posterior = xmdl,
+                   null = rope,
+                   parameter = "b_SemSimilar")
+
+BF_1
+
+```
+
+The Bayes factor is 1.72. So after seeing the data, our posterior belief that the difference between the experimental conditions is outside the ROPE is 1.72 more probable than our prior belief before seeing the data. Such a low Bayes Factor is considered anecdotal evidence for the alternative hypothesis, so a rather inconclusive result which we should not use for grand claims about nature.
+
+But Bayes Factors are rather sensitive to the prior choices we make, particularly the prior for the `b_SemSimilar` parameter in our case. And you are painfully aware by now that these prior choices are rather subjective. What we need to do is to make sure our conclusion is not dependent on our prior choices. Practically, we want to run multiple models with different priors and re-calculate the Bayes factor for each one.
+
+Let's just keep it simple here and run two more models. One with a much narrower prior and one with a much wider prior. Everything else we keep the same.
+
+```{r}
+#| label: test-different-priors
+
+# one narrower prior with a sd of 25
+my_priors_10 <- c(prior(normal(100,50), class = 'Intercept'),
+                   prior(normal(0, 25), class = b, coef = "SemSimilar"))
+
+# and one wider prior with a sd of 100
+my_priors_100 <- c(prior(normal(100,50), class = 'Intercept'),
+                   prior(normal(0, 100), class = b, coef = "SemSimilar"))
+
+
+# run those two models
+xmdl_25 <- brm(Distance ~ Sem,
+            family = gaussian(),
+            prior = my_priors_10,
+            file = "../../models/sim_sesoi_10",
+            data = sim,
+            seed = 42)
+
+xmdl_100 <- brm(Distance ~ Sem,
+            family = gaussian(),
+            prior = my_priors_100,
+            file = "../../models/sim_sesoi_100",
+            data = sim,
+            seed = 42)
+
+```
+
+```{r}
+
+# calculate BF for the model with a much narrower prior
+bayesfactor_rope(posterior = xmdl_25,
+                   null = rope,
+                   seed = 234,
+                   parameter = "b_SemSimilar") # ~3.6
+
+# calculate BF for the model with a much wider prior
+bayesfactor_rope(posterior = xmdl_100,
+                   null = rope,
+                   parameter = "b_SemSimilar") # ~0.87
+
+```
+
+Not much has changed. With a much narrower prior, we get a BF of \~3.6 (the actual value will fluctuate a little because the function refits the prior-only model and that comes with a little bit of probabilistic noise). That is moderate evidence (if you are generous) for the alternative hypothesis that the mean difference between conditions is outside of the ROPE. The wider the prior, the lower the BF (a well-known mathematical consequence of this calculation). For a very diffuse prior with a sd of 100, the BF is 0.87, so actually below 1, which is anecdotal evidence for the null hypothesis. So no matter the prior, we are looking at rather inconclusive evidence for either hypothesis and will have to call our study inconclusive (given the prior, the model, the data and our chosen ROPEs).
+
+Ideally, we explore these values for a range of prior choices and ideally the conclusions do not change. In our case, and despite of what the authors originally claim, we do not find conclusive evidence for or against the null hypothesis.
+
+# Exercise
+
+## (a) Specify a different ROPE
+
+Define and justify a different smallest effect sizes of interest for this study. Check the original article for details on the methodology and/or think about the task carefully. Specify your SESOI as a ROPE.
+
+```{r}
+#| label: rope-2
+
+# the mean absolute deviation between coders was 2.24 mms
+# if two human raters vary as much, we consider an effect smaller than 2.24 mms as not meaningful
+rope_2 <- c(-2.24, 2.24)
+
+```
+
+## (b) Calculate the Bayes factor
+
+Calculate the Bayes factor as above and interpret your results for this new ROPE.
+
+```{r}
+#| label: BF-2
+
+BF_2 <- 
+  bayesfactor_rope(posterior = xmdl,
+                   null = rope_2,
+                   parameter = "b_SemSimilar")
+
+BF_2
+
+# Not surprisingly, the BF is even lower. The Bayes factor is ~1.4. So after seeing the data, our posterior belief that the difference between the experimental conditions is outside the ROPE is ~1.4 more probable than our prior belief before seeing the data. Such a low Bayes Factor is considered anecdotal evidence, so we are left with a rather inconclusive finding. 
+
+```
+
+## (c) Check the robustness of this value for different priors
+
+Run two more models with different priors and explore how the Bayes Factor changes.
+
+```{r}
+
+
+# Since we already ran these models, we can simply use the bayesfactor_rope function for the new rope
+
+# calculate BF for the model with a much narrower prior
+bayesfactor_rope(posterior = xmdl_25,
+                   null = rope_2,
+                   parameter = "b_SemSimilar") # 2.85
+
+# calculate BF for the model with a much wider prior
+bayesfactor_rope(posterior = xmdl_100,
+                   null = rope_2,
+                   parameter = "b_SemSimilar") # 0.675
+
+# Compared to the narrower ROPE between -1 and 1, the BFs are overall lower which means the null hypothesis becomes more probable. That makes total sense because we would require even more evidence that posterior is meaningfully removed from zero. Checking three different priors, the BF range between 0.68 to 2.85, so between anecdotal evidence for the null and anecotal evidence against it. So no matter the prior, we are looking at rather inconclusive evidence for either hypothesis and will have to call our study inconclusive (given the prior, the model, the data and our chosen ROPEs).
+
+```
+
+# References
+
+<!-- References will auto-populate in the refs div below -->
+
+::: {#refs}
+:::

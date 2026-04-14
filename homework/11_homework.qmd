@@ -1,0 +1,161 @@
+---
+title: "session11 - homework"
+format: html
+editor: visual
+date: 2025-07-17
+author: Timo Roettger
+execute:
+  error: false
+  warning: false
+  message: false
+  cache: true
+bibliography: ../resources/bibliography.bib
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_and_libraries
+#| echo: false
+
+# just run this code chunk
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, tidybayes, brms, ggdist, bayestestR, modelr)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+# options to increase efficiency of brms models (optional)
+options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# Introduction
+
+We will be analyzing the data from @roettger2014assessing.
+
+```{r}
+#| label: preprocessing
+
+# Load our datasets
+incNeutr <- read_csv("../data/E1_production.csv") |> 
+  # we will focus only on the relevant columns
+  select(subject, voicing, item_pair, usable, vowel_dur) |> 
+  # and only on rows the authors deemed usable
+  filter(usable == "usable") |> 
+  select(!usable)
+
+```
+
+The variables:
+
+`subject`: unique identifier for participants (n = 16)
+
+`voicing`: underlying voicing status of stop (`voiced` vs. `voiceless`)
+
+`item_pair`: unique identifier for pseudo word minimal pairs (n = 24)
+
+`vowel_dur`: vowel duration in ms
+
+In this study, we recorded people producing words such as Rad and Rat in German and were interested to see whether these words phonetically differ. The reason why this is interesting is that, according to German phonology, these words *should* be identical, i.e. he voicing distinction between /d/ and /t/ should have been *neutralized.* However, previous literature indicates that this neutralization is phonetically *incomplete.* For example, the vowel preceding a (de)voiced stop such /d/ is slightly longer preceding a voiceless stop such as /t/.
+
+The researchers hypothesize that the vowel duration is meaningfully longer preceding voiced stops than preceding voiceless stops. They model this relationship using a linear mixed effects model that accounts for both speaker and word variation as well as by-speaker and by-word variation for the critical predictor voicing.
+
+```{r}
+#| label: model_formula
+
+# store model formula
+mdl_formula = bf(vowel_dur ~ voicing +
+                   # random intercepts and slopes for subject and item_pair
+                   (1 + voicing | subject) +
+                   (1 + voicing | item_pair))
+
+```
+
+```{r}
+#| label: spec-priors
+
+# some weakly informative priors 
+my_priors <- c(prior(normal(150,50), class = 'Intercept'),
+               # weakly informative prior for the voicing difference (very diffuse)
+               prior(normal(0, 30), class = 'b', coef = 'voicingvoiceless'),
+               # weakly informative prior for all sources of variance (very diffuse)
+               prior(cauchy(0,100), class = 'sd'),
+               # weakly informative prior for residual variance (very diffuse)
+               prior(cauchy(0,100), class = 'sigma'),
+               # correlations
+               prior(lkj(1), class = 'cor'))
+
+```
+
+```{r}
+#| label: run-model
+
+# run model
+xmdl <- brm(mdl_formula,
+            family = gaussian(),
+            prior = my_priors,
+            file = "../models/in_sesoi",
+            data = incNeutr,
+            seed = 42)
+
+# I also store the prior-only model 
+xmdl_prior <- brm(mdl_formula,
+            family = gaussian(),
+            prior = my_priors,
+            sample_prior = "only",
+            file = "../models/in_sesoi_priors",
+            data = incNeutr,
+            seed = 42)
+
+```
+
+# Exercises
+
+## (a) Plot the posterior distribution
+
+Explore the posterior distribution for the difference between voiced and voiceless stops. Interpret it.
+
+```{r}
+
+# YOUR ANSWERS HERE
+
+```
+
+## (b) Define a SESOI
+
+Define a SESOI and justify it. Can you find an applied justification for a SESOI. Or a theoretical justification? Are there justifications grounded in measurement? What about justifications based on previous research? Define it and formalize it as a Region of Practical Equivalence as we have done before. Use the `bayesfactor_rope()` function to calculate the Bayes factor for and against the posteriors being inside the ROPE.
+
+```{r}
+
+# YOUR ANSWER HERE
+
+```
+
+## (c) Check robustness of your analysis
+
+How robust is your conclusion against different prior choices?
+
+```{r}
+
+# YOUR ANSWER HERE
+
+```
+
+# References
+
+<!-- References will auto-populate in the refs div below -->
+
+::: {#refs}
+:::
