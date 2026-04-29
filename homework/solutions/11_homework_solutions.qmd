@@ -1,0 +1,353 @@
+---
+title: "session11 - homework - solutions"
+format: html
+editor: visual
+date: 2025-07-17
+author: Timo Roettger
+execute:
+  error: false
+  warning: false
+  message: false
+  cache: true
+bibliography: ../../resources/bibliography.bib
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_and_libraries
+#| echo: false
+
+# just run this code chunk
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, tidybayes, brms, ggdist, bayestestR, modelr)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+# options to increase efficiency of brms models (optional)
+options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# Introduction
+
+We will be analyzing the data from @roettger2014assessing.
+
+```{r}
+#| label: preprocessing
+
+# Load our datasets
+incNeutr <- read_csv("../../data/E1_production.csv") |> 
+  # we will focus only on the relevant columns
+  select(subject, voicing, item_pair, usable, vowel_dur) |> 
+  # and only on rows the authors deemed usable
+  filter(usable == "usable") |> 
+  select(!usable)
+
+```
+
+The variables:
+
+`subject`: unique identifier for participants (n = 16)
+
+`voicing`: underlying voicing status of stop (`voiced` vs. `voiceless`)
+
+`item_pair`: unique identifier for pseudo word minimal pairs (n = 24)
+
+`vowel_dur`: vowel duration in ms
+
+In this study, we recorded people producing words such as Rad and Rat in German and were interested to see whether these words phonetically differ. The reason why this is interesting is that, according to German phonology, these words *should* be identical, i.e. he voicing distinction between /d/ and /t/ should have been *neutralized.* However, previous literature indicates that this neutralization is phonetically *incomplete.* For example, the vowel preceding a (de)voiced stop such /d/ is slightly longer preceding a voiceless stop such as /t/.
+
+The researchers hypothesize that the vowel duration is meaningfully longer preceding voiced stops than preceding voiceless stops. They model this relationship using a linear mixed effects model that accounts for both speaker and word variation as well as by-speaker and by-word variation for the critical predictor voicing.
+
+```{r}
+#| label: model_formula
+
+# store model formula
+mdl_formula = bf(vowel_dur ~ voicing +
+                   # random intercepts and slopes for subject and item_pair
+                   (1 + voicing | subject) +
+                   (1 + voicing | item_pair))
+
+```
+
+```{r}
+#| label: spec-priors
+
+# some weakly informative priors 
+my_priors <- c(prior(normal(150,50), class = 'Intercept'),
+               # weakly informative prior for the voicing difference (very diffuse)
+               prior(normal(0, 15), class = 'b', coef = 'voicingvoiceless'),
+               # weakly informative prior for all sources of variance (very diffuse)
+               prior(cauchy(0,100), class = 'sd'),
+               # weakly informative prior for residual variance (very diffuse)
+               prior(cauchy(0,100), class = 'sigma'),
+               # correlations
+               prior(lkj(1), class = 'cor'))
+
+```
+
+```{r}
+#| label: run-model
+
+# run model
+xmdl <- brm(mdl_formula,
+            family = gaussian(),
+            prior = my_priors,
+            file = "../../models/in_sesoi",
+            data = incNeutr,
+            seed = 42)
+
+# I also store the prior-only model 
+xmdl_prior <- brm(mdl_formula,
+            family = gaussian(),
+            prior = my_priors,
+            sample_prior = "only",
+            file = "../../models/in_sesoi_priors",
+            data = incNeutr,
+            seed = 42)
+
+```
+
+# Exercises
+
+## (a) Plot the posterior distribution
+
+Explore the posterior distribution for the difference between voiced and voiceless stops. Interpret it.
+
+```{r}
+#| label: posteriors
+
+# look at posteriors for the two conditions
+posteriors <- 
+  xmdl |> 
+  # extract samples for both parameters (intercept and difference between groups)
+  spread_draws(b_Intercept, b_voicingvoiceless) |> 
+  # calculate the values for voiced and voiceless stops
+  mutate(voiced = b_Intercept,
+         voiceless = b_Intercept + b_voicingvoiceless) |> 
+  # remove all the columns except those
+  select(voiced, voiceless) |> 
+  # change data format from wide to a long format
+  pivot_longer(everything(),
+               names_to = "voicing",
+               values_to = "duration") 
+
+# plot
+posteriors |> 
+  ggplot(aes(x = duration,
+             fill = voicing)) +
+    geom_density() +
+    labs(x = "Posterior estimates for mean vowel duration in ms") +
+    facet_wrap(~voicing, ncol = 1) +
+    scale_fill_manual(values = c("purple", "orange"))
+
+```
+
+The two posterior distributions are heavily overlapping. A first hint that we cannot be completely certain that the two conditions are credibly different. Let's look at the parameter that represents the difference between these two conditions:
+
+```{r}
+#| label: posteriors-diff
+
+priors <- xmdl_prior |> 
+  spread_draws(b_voicingvoiceless) |> 
+  mutate(model = "prior")
+
+posteriors <- xmdl |> 
+  spread_draws(b_voicingvoiceless)  |> 
+  mutate(model = "posterior") |> full_join(priors)
+  
+ggplot(posteriors,
+       aes(x = b_voicingvoiceless, fill = model)) +
+    geom_density(color = NA,
+                 alpha = 0.5) +
+  scale_color_manual(values = c(alpha("blue",0.5), "darkgrey"))+
+  scale_fill_manual(values = c(alpha("blue",0.5), "darkgrey"))+
+  geom_vline(xintercept = c(-2, 2), lty = "dashed") +
+  labs(y = "",
+       x = "\nPosterior estimates for mean difference between voiceless and devoiced") +
+  theme_minimal()
+
+#proportion_rope <- 
+  posteriors |> 
+  mutate(in_rope = ifelse(b_voicingvoiceless < -2 | b_voicingvoiceless > 2, "outside", "inside")) |> 
+  group_by(model,in_rope) |> 
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n)) |> 
+  ggplot(aes(x = 1, y = freq, fill = in_rope)) +
+  geom_bar(width = 0.1,
+           stat = "identity") +
+  facet_grid(.~ factor(model, levels = c("prior", "posterior"))) +
+  scale_fill_manual(values = c("darkred","grey")) +
+  labs(x = "\n amount of samples in\nand outside of ROPE",
+       y = "") +
+  theme_minimal() +
+  theme(axis.text = element_blank(),
+        legend.position = "none")
+
+
+```
+
+You can see that the distributions covers mostly negative values, i.e. voiced stops have longer vowel duration than voiceless stops. There is barely an overlap with zero.
+
+## (b) Define a SESOI
+
+Define a SESOI and justify it. Can you find an applied justification for a SESOI. Or a theoretical justification? Are there justifications grounded in measurement? What about justifications based on previous research? Define it and formalize it as a Region of Practical Equivalence as we have done before. Use the `bayesfactor_rope()` function to calculate the Bayes factor for and against the posteriors being inside the ROPE.
+
+```{r}
+
+# YOUR ANSWER HERE
+
+```
+
+-   There are no applied justification for a SESOI I can think of.
+-   The only theoretical SESOI I can think of is grounded in just noticeable differences. There are several phonetic studies that suggest that the smallest amount of time it takes for people to perceive that one speech signal is longer than another is 10 ms (e.g. Lehiste 1976:226, Phillips et al. 1994:214). Values under 10 ms can thus not be "reliably" perceived. With reliable the literature often means with above 75% accuracy. If you cannot hear it, that means you might not be able to communicatively use it (maybe).
+-   In terms of measurement error, Allen (1978) suggest that the minimum standard deviation for measuring vowel duration by phoneticians ranges from 2 - 5 ms. Values under 2 ms are thus not reliably measurable by phoneticians.
+
+Let us proceed with these two SESOI benchmarks and define two ROPEs.
+
+```{r}
+#| label: ropes
+
+# define our ROPE
+rope_jnd <- c(-10,10)
+rope_sd <- c(-2,2)
+
+```
+
+Now we use the `bayesfactor_rope()` function to calculate the Bayes factor. The Bayes factor represents the shift in believe towards the alternative or null hypothesis after seeing the data.
+
+```{r}
+#| label: BF-1
+
+BF_JND <- 
+  bayesfactor_rope(posterior = xmdl,
+                   prior = xmdl_prior,
+                   null = rope_jnd,
+                   parameter = "b_voicingvoiceless")
+
+BF_SD <- bayesfactor_rope(posterior = xmdl,
+                   null = rope_sd,
+                   prior = xmdl_prior,
+                   parameter = "b_voicingvoiceless")
+
+BF_JND # 0.110
+BF_SD # 13.65
+
+```
+
+The Bayes factor for the analysis based on the JND is 0.110, so moderate evidence (9 times as probable) for the null. This does make theoretically a lot of sense: The effect is supposed to be not perceivable by the naked ear.
+
+The Bayes factor for the analysis based on measurement error is 13.7, so strong evidence (\>13 times as probable) for the alternative. So even if we take into account how variable phoneticians are when they measure things, evidence for the incomplete neutralization effect remains robust.
+
+## (c) Check robustness of your analysis
+
+How robust is your conclusion against different prior choices?
+
+```{r}
+#| label: test-different-priors
+
+# one narrower prior with a sd of 25
+# some weakly informative priors 
+my_priors <- c(prior(normal(150,50), class = 'Intercept'),
+               prior(cauchy(0,100), class = 'sd'),
+               prior(cauchy(0,100), class = 'sigma'),
+               prior(lkj(1), class = 'cor'))
+
+# define prior that is half the width (above was sd = 30)
+my_priors_15 <- c(my_priors, 
+                  prior(normal(0, 15), class = 'b', coef = 'voicingvoiceless'))
+
+# define prior that is twice the width (above was sd = 30)
+my_priors_60 <- c(my_priors, 
+                  prior(normal(0, 60), class = 'b', coef = 'voicingvoiceless'))
+
+
+# run model with narrow prior
+xmdl_15 <- brm(mdl_formula,
+            family = gaussian(),
+            prior = my_priors_15,
+            data = incNeutr,
+            seed = 42)
+
+# I also store the prior-only model 
+xmdl_15_prior <- brm(mdl_formula,
+            family = gaussian(),
+            prior = my_priors_15,
+            sample_prior = "only",
+            data = incNeutr,
+            seed = 42)
+
+# run model with wider prior
+xmdl_60 <- brm(mdl_formula,
+            family = gaussian(),
+            prior = my_priors_60,
+            data = incNeutr,
+            seed = 42)
+
+# I also store the prior-only model 
+xmdl_60_prior <- brm(mdl_formula,
+            family = gaussian(),
+            prior = my_priors_60,
+            sample_prior = "only",
+            data = incNeutr,
+            seed = 42)
+
+```
+
+```{r}
+
+# narrow prior
+BF_JND_15 <- 
+  bayesfactor_rope(posterior = xmdl_15,
+                   prior = xmdl_15_prior,
+                   null = rope_jnd,
+                   parameter = "b_voicingvoiceless")
+
+BF_SD_15 <- 
+  bayesfactor_rope(posterior = xmdl_15,
+                   prior = xmdl_15_prior,
+                   null = rope_sd,
+                   parameter = "b_voicingvoiceless")
+
+BF_JND_15 # 0.287 ~ Null is < 4x more likely
+BF_SD_15 # 25.13 ~ Alternative is ~25x more likely
+
+# wider prior
+BF_JND_60 <- 
+  bayesfactor_rope(posterior = xmdl_60,
+                   prior = xmdl_60_prior,
+                   null = rope_jnd,
+                   parameter = "b_voicingvoiceless")
+
+BF_SD_60 <- 
+  bayesfactor_rope(posterior = xmdl_60,
+                   prior = xmdl_60_prior,
+                   null = rope_sd,
+                   parameter = "b_voicingvoiceless")
+
+BF_JND_60 # 0.049 ~ Null is ~20x more likely
+BF_SD_60 # 6.35 ~ Alternative is ~6x more likely
+
+```
+
+The wider the priors, the more evidence the data provide for the null hypothesis, but, qualitatively speaking, the Bayes factors suggest evidence for alternative if we define the SESOI based on measurement consideration. When defining the SESOI based on the just noticeable difference, we find evidence against the null.
+
+# References
+
+<!-- References will auto-populate in the refs div below -->
+
+::: {#refs}
+:::
